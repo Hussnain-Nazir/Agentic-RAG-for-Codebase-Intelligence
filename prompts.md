@@ -69,4 +69,66 @@
 
 **Resulting module/commit:** `backend/`, `frontend/`, `docker-compose.yml`, `.env.example`, `README.md`, and `prompts.md`.
 
-**Test result:** Backend pytest passed 1 test. Frontend Vitest passed 1 test. The frontend production build passed. `docker compose config` could not run because Docker Compose is not installed on the verification host; a YAML parse of `docker-compose.yml` passed.
+**Test result:** Backend pytest passed 1 test. Frontend Vitest passed 1 test. The frontend production build passed. After Docker became available, `docker compose config` passed and the backend, frontend, and PostgreSQL services started successfully. The backend health endpoint and frontend returned HTTP 200.
+
+### 2026-09-17 - Phase 1 authentication foundation
+
+**Prompt:**
+
+> Read PRISM_SPEC.md sections 25 (Database Design, users table) and 26 (REST
+> API, AUTH endpoints) before starting. Inspect backend/app/config.py and
+> backend/app/main.py from Phase 0.
+>
+> This is Phase 1 of Prism. Implement:
+>
+> 1. Alembic setup in backend/alembic/, configured to read DATABASE_URL from
+>    the existing settings object. Create the baseline migration containing
+>    only the users table as specified in PRISM_SPEC.md section 25:
+>    id (UUID PK), email (unique), hashed_password, created_at.
+>
+> 2. backend/app/models/user.py - SQLAlchemy ORM model matching the table.
+>
+> 3. backend/app/auth/ - password hashing (use passlib or bcrypt directly),
+>    JWT creation/verification using JWT_SECRET from settings, and a FastAPI
+>    dependency get_current_user that extracts and validates the bearer token,
+>    raising 401 on missing/invalid/expired tokens.
+>
+> 4. backend/app/schemas/auth.py - Pydantic request/response schemas for
+>    register and login.
+>
+> 5. backend/app/api/routes/auth.py:
+>
+>    - POST /auth/register -> {user_id}, 409 if email already exists.
+>    - POST /auth/login -> {access_token}, 401 on invalid credentials.
+>      Wire this router into the app in main.py.
+>
+> 6. Tests in backend/tests/test_auth.py covering: successful registration,
+>    duplicate email rejection, successful login, invalid password rejection,
+>    and that a protected test route using get_current_user rejects requests
+>    with no token and accepts requests with a valid token.
+>
+> 7. Update backend startup (entrypoint or docker-compose command) so
+>    migrations run automatically before the app starts in the Docker Compose
+>    environment (wait for postgres to be ready, then `alembic upgrade head`,
+>    then start uvicorn).
+>
+> 8. Append a prompts.md entry for this phase. Update README.md status line to
+>    "Status: Phase 1 complete" only after all tests pass.
+>
+> Out of scope: repository models, GitHub integration, any endpoint other than
+> register/login, any frontend auth UI (that comes in a later frontend phase).
+>
+> Acceptance conditions:
+>
+> - `alembic upgrade head` runs cleanly against a fresh database.
+> - All Phase 0 tests still pass.
+> - All new auth tests pass.
+> - No plaintext passwords are ever logged or stored.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added the users ORM model and baseline migration, async database session setup, bcrypt password hashing, JWT authentication, register and login routes, bearer-token dependency, Docker migration startup, and authentication tests.
+
+**Resulting module/commit:** `backend/alembic/`, `backend/app/db/`, `backend/app/models/user.py`, `backend/app/auth/`, `backend/app/schemas/auth.py`, `backend/app/api/routes/auth.py`, `backend/tests/test_auth.py`, and backend startup configuration.
+
+**Test result:** Backend pytest passed all 7 tests, including the Phase 0 health test and 6 Phase 1 authentication tests. The baseline Alembic migration upgraded a fresh PostgreSQL container to revision 0001 successfully, and the live `users` table matched the required schema.
