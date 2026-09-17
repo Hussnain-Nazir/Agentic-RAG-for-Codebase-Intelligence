@@ -32,6 +32,8 @@ class Settings(BaseSettings):
 
     max_zip_size_mb: int = 200
     max_file_size_mb: float = 1.5
+    max_extracted_size_mb: int = 500
+    max_extracted_files: int = 20_000
     max_concurrent_index_jobs: int = 2
 
     model_config = SettingsConfigDict(

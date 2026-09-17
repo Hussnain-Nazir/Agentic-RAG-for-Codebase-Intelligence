@@ -343,3 +343,97 @@
 **Resulting module/commit:** `backend/app/evidence/`, `backend/app/tools/`, `backend/app/memory/`, `backend/app/tracing/`, `backend/app/agent/`, agent trace models in `backend/app/models/`, `backend/alembic/versions/0003_add_agent_scaffold_tables.py`, and `backend/tests/test_agent_skeleton.py`.
 
 **Test result:** All 25 backend tests and the existing frontend test passed, including the mocked end-to-end agent path and tests for tool registration, credential sanitization, minimal memory persistence, and the Evidence schema. Alembic revision 0003 applied to PostgreSQL, all five scaffold tables were confirmed present, Docker Compose validated, and the migrated backend returned `{"status":"ok"}` from `/health`. No test made a real model or other network call.
+
+### 2026-09-17 - Phase 5 ZIP ingestion
+
+**Prompt:**
+
+> Read PRISM_SPEC.md sections 8 (Repository Sources & ZIP Upload), 10
+> (File Filtering & Security), and 2.6 (MVP Scope Limits) in full before
+> starting. Inspect backend/app/sources/upload.py and backend/app/sources/base.py
+> from Phase 2, and backend/app/api/deps.py.
+>
+> This is Phase 5 of Prism. Implement:
+>
+> 1. backend/app/ingestion/security.py: safe_extract(zip_path, dest_dir)
+>    that validates every archive entry's resolved path stays under dest_dir
+>    (reject any entry containing ".." or resolving outside the root, reject
+>    absolute paths, reject symlink entries), enforces MAX_ZIP_SIZE_MB and a
+>    maximum extracted file count/size from settings, and raises a specific
+>    ZipSafetyError with a clear reason on violation.
+>
+> 2. backend/app/ingestion/filtering.py: source-independent functions
+>    is_ignored_path(path) (default excluded directories from PRISM_SPEC.md
+>    section 10, plus best-effort .gitignore pattern matching if a
+>    .gitignore is present in the uploaded content), is_secret_file(path)
+>    (denylist from section 10), is_binary(content_bytes) (null-byte
+>    heuristic), and classify_file(path, content_bytes) returning a status
+>    from RepositoryFile.status (OK, OVERSIZED, BINARY, PARSE_FAILED is not
+>    used here - only OK/OVERSIZED/BINARY at this phase).
+>
+> 3. Complete UploadedRepositorySource in backend/app/sources/upload.py:
+>    list_files enumerates the extracted directory applying filtering;
+>    get_file_content reads a file's bytes; get_revision returns a
+>    content-hash of the full file listing (sorted path -> content_hash
+>    pairs, hashed together) since there is no external revision identifier
+>    for an upload.
+>
+> 4. backend/app/ingestion/pipeline.py: discover_and_normalize(source:
+>    RepositorySource, revision: str) -> list[NormalizedFile] that calls
+>    list_files, applies filtering/classification, and returns normalized
+>    file records. This function must not know or care whether it was called
+>    with a GitHubRepositorySource or UploadedRepositorySource - write it
+>    generically against the RepositorySource protocol from Phase 2. After
+>    normalization, if the count of indexable (non-ignored, non-binary,
+>    non-oversized) files exceeds the ~2,000-file MVP target from PRISM_SPEC.md
+>    section 2.6, set RepositoryIndex.size_warning = true (add this boolean
+>    column via migration) rather than rejecting the repository - indexing
+>    still proceeds. This is separate from, and does not replace, the hard
+>    MAX_ZIP_SIZE_MB / file-size / raw-file-count bounds from section 29.2,
+>    which are still enforced as hard rejections.
+>
+> 5. backend/app/api/routes/repositories.py: POST /repositories accepting a
+>    multipart ZIP upload, creating a Repository (source_type=upload) and a
+>    RepositoryIndex (state starts PENDING, moves to DISCOVERING then READY
+>    once discover_and_normalize completes synchronously for this phase -
+>    full async job handling is a later phase), persisting RepositoryFile
+>    rows from the normalized result. Enforce MAX_ZIP_SIZE_MB with a 413
+>    response before extraction is attempted.
+>
+> 6. Tests in backend/tests/test_zip_ingestion.py using small fixture ZIPs
+>    under backend/tests/fixtures/: a Zip Slip attempt is rejected before any
+>    file is written outside the extraction root; an oversized ZIP is
+>    rejected with 413; a ZIP containing node_modules/, .env, and a binary
+>    file correctly excludes/classifies each; a clean small fixture repo
+>    normalizes into the expected RepositoryFile rows; a fixture with more
+>    than the ~2,000-indexable-file threshold sets size_warning=true on the
+>    resulting RepositoryIndex while still completing indexing (a synthetic
+>    fixture with many trivially small files is sufficient - do not require a
+>    real 2,000-file repository).
+>
+> Out of scope: GitHub integration, Tree-sitter parsing, chunking, embeddings,
+> asynchronous job execution (keep this phase synchronous for simplicity -
+> async execution is formalized once GitHub sync also needs it).
+>
+> Acceptance conditions:
+>
+> - All previous tests still pass.
+> - Zip Slip and oversized-ZIP tests fail safely with no partial extraction
+>   outside the sandboxed directory.
+> - Secret and binary files never appear in a "content read for indexing"
+>   code path, even though they may still appear in the raw file listing
+>   with the correct status.
+> - A repository under the ~2,000-indexable-file target never sets
+>   size_warning; a repository over it does, and still reaches READY rather
+>   than being rejected.
+>
+> Append a prompts.md entry. Update README.md status to
+> "Status: Phase 5 complete" only after tests pass.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added preflight-safe ZIP extraction with path, symlink, archive-size, extracted-size, and raw-file-count enforcement; source-independent filtering and classification; the completed uploaded repository source; generic normalization; synchronous authenticated ZIP ingestion; and the non-blocking repository size warning migration. Added configurable extracted-size and file-count hard bounds without changing the 2,000-file warning into a rejection.
+
+**Resulting module/commit:** `backend/app/ingestion/`, `backend/app/sources/upload.py`, `backend/app/api/routes/repositories.py`, `backend/alembic/versions/0004_add_repository_index_size_warning.py`, configuration files, checked-in fixtures under `backend/tests/fixtures/`, and `backend/tests/test_zip_ingestion.py`.
+
+**Test result:** All 29 backend tests and the existing frontend test passed. The ZIP suite verified pre-write Zip Slip rejection, a 413 response before extraction for oversized uploads, exclusion of `node_modules/` and `.env`, binary classification, expected persistence for a clean fixture, and `READY` plus `size_warning=true` for 2,001 indexable files. Alembic revision 0004 applied to PostgreSQL, the non-null boolean column and false default were confirmed, Docker Compose validated, and the backend health check returned `{"status":"ok"}`.
