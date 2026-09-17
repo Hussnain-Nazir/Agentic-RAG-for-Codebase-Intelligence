@@ -437,3 +437,78 @@
 **Resulting module/commit:** `backend/app/ingestion/`, `backend/app/sources/upload.py`, `backend/app/api/routes/repositories.py`, `backend/alembic/versions/0004_add_repository_index_size_warning.py`, configuration files, checked-in fixtures under `backend/tests/fixtures/`, and `backend/tests/test_zip_ingestion.py`.
 
 **Test result:** All 29 backend tests and the existing frontend test passed. The ZIP suite verified pre-write Zip Slip rejection, a 413 response before extraction for oversized uploads, exclusion of `node_modules/` and `.env`, binary classification, expected persistence for a clean fixture, and `READY` plus `size_warning=true` for 2,001 indexable files. Alembic revision 0004 applied to PostgreSQL, the non-null boolean column and false default were confirmed, Docker Compose validated, and the backend health check returned `{"status":"ok"}`.
+
+### 2026-09-17 - Phase 6 GitHub App integration
+
+**Prompt:**
+
+> Read PRISM_SPEC.md section 7 (GitHub App Integration) in full before
+> starting. Inspect backend/app/sources/github.py (currently a stub from
+> Phase 2), backend/app/ingestion/pipeline.py and backend/app/ingestion/
+> filtering.py from Phase 5, and backend/app/models/ for GitHubInstallation
+> and Repository.
+>
+> This is Phase 6 of Prism. Implement:
+>
+> 1. backend/app/github/client.py: GitHubClient wrapping: app-level JWT
+>    signing using GITHUB_APP_PRIVATE_KEY_PATH and GITHUB_APP_ID, installation
+>    access token retrieval and caching with expiry-aware refresh, list
+>    installations, list repositories for an installation (paginated via Link
+>    headers), get default branch, get branch list, get repository tree
+>    (recursive), get file/blob content. Implement retry with exponential
+>    backoff on 5xx and rate-limit-aware backoff using response headers, up to
+>    3 attempts, per PRISM_SPEC.md section 7.3.
+>
+> 2. backend/app/github/errors.py: typed exceptions - GitHubInstallationRevoked,
+>    GitHubAccessLost, GitHubRepositoryDeleted, GitHubBranchMissing,
+>    GitHubRateLimited, GitHubApiError - raised by the client based on
+>    response status codes per PRISM_SPEC.md section 7.4's table.
+>
+> 3. backend/app/api/routes/github.py: GET /github/install-url, GET
+>    /github/callback (persists a GitHubInstallation), GET
+>    /github/installations, GET /github/installations/{id}/repositories.
+>
+> 4. Complete GitHubRepositorySource in backend/app/sources/github.py:
+>    list_files uses the tree API and yields SourceFileRef entries;
+>    get_file_content fetches blob content; get_revision returns the branch's
+>    current commit SHA. It must satisfy the exact same RepositorySource
+>    protocol Phase 5's UploadedRepositorySource satisfies.
+>
+> 5. Extend POST /repositories to accept {source_type: "github",
+>    github_repo_id, branch} and run the same discover_and_normalize function
+>    from Phase 5 against a GitHubRepositorySource instance - do not write a
+>    second normalization path. Persist github_sha per RepositoryFile (this
+>    field exists on the model from Phase 2; populate it here for the first
+>    time).
+>
+> 6. Tests in backend/tests/test_github_integration.py mocking the GitHub API
+>    (respx or httpx MockTransport) covering: successful installation token
+>    retrieval and caching, pagination across multiple pages, each typed error
+>    condition from PRISM_SPEC.md section 7.4, and a full import producing the
+>    same shape of RepositoryFile rows as the Phase 5 ZIP test does for an
+>    equivalent small fixture tree.
+>
+> Out of scope: incremental synchronization logic beyond initial import
+> (diffing against a previous index is Phase 20's job), Tree-sitter parsing,
+> chunking, embeddings.
+>
+> Acceptance conditions:
+>
+> - All previous tests still pass.
+> - No test makes a real call to api.github.com.
+> - GitHubRepositorySource and UploadedRepositorySource both satisfy
+>   discover_and_normalize with no branching logic inside that function based
+>   on source type.
+> - GitHub App private key and tokens never appear in logs or test output.
+>
+> Append a prompts.md entry. Update README.md status to
+> "Status: Phase 6 complete" only after tests pass, and add a short setup note
+> in README pointing to the [MANUAL] GitHub App creation steps below.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added the GitHub App REST client with RS256 app JWT signing, expiry-aware installation-token caching, pagination, repository metadata/tree/blob methods, bounded retry behavior, and typed lifecycle errors. Added authenticated GitHub installation routes, completed GitHubRepositorySource, and extended the existing repository import endpoint so GitHub and ZIP sources share the same normalization and persistence path.
+
+**Resulting module/commit:** `backend/app/github/`, `backend/app/api/routes/github.py`, `backend/app/sources/github.py`, the shared `backend/app/api/routes/repositories.py` import route, `backend/tests/test_github_integration.py`, dependency updates, Docker entrypoint normalization, and README manual setup instructions.
+
+**Test result:** All 39 backend tests and the existing frontend test passed. Eleven GitHub tests used only `httpx.MockTransport` or an in-process fake client and covered token caching, Link pagination, typed revoked/access/deleted/branch/rate-limit/API failures, newline-wrapped blob decoding, all four routes, and a full GitHub import with persisted blob SHAs. Docker Compose validated, the rebuilt backend returned `{"status":"ok"}`, and Alembic remained at revision 0004 head. No test contacted `api.github.com`, and no private key or installation token was emitted in test output.
