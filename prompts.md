@@ -132,3 +132,65 @@
 **Resulting module/commit:** `backend/alembic/`, `backend/app/db/`, `backend/app/models/user.py`, `backend/app/auth/`, `backend/app/schemas/auth.py`, `backend/app/api/routes/auth.py`, `backend/tests/test_auth.py`, and backend startup configuration.
 
 **Test result:** Backend pytest passed all 7 tests, including the Phase 0 health test and 6 Phase 1 authentication tests. The baseline Alembic migration upgraded a fresh PostgreSQL container to revision 0001 successfully, and the live `users` table matched the required schema.
+
+### 2026-09-17 - Phase 2 repository source foundation
+
+**Prompt:**
+
+> Read PRISM_SPEC.md sections 8 (Repository Sources & ZIP Upload, especially
+> the RepositorySource interface), 9 (Ingestion & Synchronization, especially
+> the indexing states), and 25 (Database Design tables: repositories,
+> repository_indexes, repository_files, github_installations) before starting.
+> Inspect backend/app/models/user.py and backend/app/auth/ from Phase 1.
+>
+> This is Phase 2 of Prism. Implement:
+>
+> 1. SQLAlchemy models in backend/app/models/: Repository, RepositoryIndex,
+>    RepositoryFile, GitHubInstallation, matching PRISM_SPEC.md section 25
+>    exactly (fields, keys, indexes, cascade behavior). RepositoryIndex.state
+>    must use the enum from section 9.2 (PENDING, DISCOVERING, PARSING,
+>    EMBEDDING, INDEXING, READY, FAILED, PARTIAL).
+>
+> 2. backend/app/sources/base.py defining the RepositorySource protocol from
+>    PRISM_SPEC.md section 8.1 (list_files, get_file_content, get_revision),
+>    plus a SourceFileRef data class.
+>
+> 3. backend/app/sources/github.py and backend/app/sources/upload.py with
+>    GitHubRepositorySource and UploadedRepositorySource classes implementing
+>    the protocol's method signatures but raising NotImplementedError in each
+>    body - these are intentionally unimplemented stubs for this phase.
+>
+> 4. backend/app/api/deps.py: a get_repository_or_404 dependency that loads a
+>    Repository by id and raises 404 if not found or 403 if
+>    repository.owner_id != current_user.id. This will be reused by every
+>    future repository-scoped route.
+>
+> 5. Alembic migration adding the four new tables with correct foreign keys
+>    and indexes as specified.
+>
+> 6. Tests: model creation and relationships, RepositoryIndex.state enum
+>    values, and get_repository_or_404 correctly returning 404/403/200 for
+>    not-found, wrong-owner, and correct-owner cases respectively (use a
+>    temporary test route to exercise the dependency).
+>
+> Out of scope: any real GitHub API call, any real ZIP handling, any parsing,
+> any indexing logic - this phase only creates schema and interface shape.
+>
+> Acceptance conditions:
+>
+> - Migration applies cleanly on top of Phase 1's migration.
+> - All previous tests still pass.
+> - New tests pass.
+> - Calling either stub source's methods raises NotImplementedError with a
+>   clear message (proves the interface is enforced, not silently mocked).
+>
+> Append a prompts.md entry. Update README.md status to
+> "Status: Phase 2 complete" only after tests pass.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added the four repository source ORM models and enums, Alembic revision 0002, the RepositorySource protocol and intentional GitHub/upload stubs, the shared repository ownership dependency, and Phase 2 model, authorization, enum, and stub tests.
+
+**Resulting module/commit:** `backend/app/models/`, `backend/app/sources/`, `backend/app/api/deps.py`, `backend/alembic/versions/0002_add_repository_source_tables.py`, and `backend/tests/test_repositories.py`.
+
+**Test result:** All 14 backend tests passed. Alembic upgraded the live PostgreSQL database from revision 0001 to 0002, and direct schema inspection confirmed the required tables, enums, indexes, uniqueness constraints, and foreign-key deletion behavior.
