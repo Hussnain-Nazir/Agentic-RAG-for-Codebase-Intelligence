@@ -11,6 +11,7 @@ from app.db.base import Base
 if TYPE_CHECKING:
     from app.models.github_installation import GitHubInstallation
     from app.models.repository_index import RepositoryIndex
+    from app.models.session import Session
     from app.models.user import User
 
 
@@ -74,6 +75,11 @@ class Repository(Base):
         back_populates="repositories"
     )
     indexes: Mapped[list["RepositoryIndex"]] = relationship(
+        back_populates="repository",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    sessions: Mapped[list["Session"]] = relationship(
         back_populates="repository",
         cascade="all, delete-orphan",
         passive_deletes=True,

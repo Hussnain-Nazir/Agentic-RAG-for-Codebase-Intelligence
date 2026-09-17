@@ -265,3 +265,81 @@
 **Resulting module/commit:** `backend/app/llm/`, `backend/app/api/routes/models.py`, `backend/scripts/smoke_test_model.py`, `backend/app/main.py`, and `backend/tests/test_llm.py`.
 
 **Test result:** All 20 backend tests passed with the provider HTTP test using `httpx.MockTransport` and no real model calls. The existing frontend test passed. Docker Compose configuration validated, the backend image rebuilt successfully, and the rebuilt service returned `{"status":"ok"}` from `/health`.
+
+### 2026-09-17 - Phase 4 Week 5 agent scaffold
+
+**Prompt:**
+
+> Read PRISM_SPEC.md sections 15 (Retrieval & Context Building, Evidence
+> Context concept), 16 (Agent Architecture & Execution Loop), 17 (Skills/Tool
+> Registry), 19 (Memory Architecture), 20 (Hooks, Tracing & Observability),
+> and 22 (Structured Outputs, Evidence & Grounding) before starting. Inspect
+> backend/app/llm/ from Phase 3.
+>
+> This is Phase 4 of Prism. Implement:
+>
+> 1. backend/app/evidence/models.py: the Evidence Pydantic model exactly as
+>    defined in PRISM_SPEC.md section 22.1 (evidence_id, repository_id,
+>    repository_index_id, source_type, file_path, symbol, start_line,
+>    end_line, content_excerpt, relationship_metadata, retrieval_metadata,
+>    external_source_metadata).
+>
+> 2. backend/app/tools/base.py: the Tool protocol from PRISM_SPEC.md section
+>    17 (name, description, input_schema, output_schema, requires_auth,
+>    execute). backend/app/tools/registry.py: ToolRegistry with register/get/
+>    list. Do not register any concrete tools yet - leave the registry empty
+>    except for tests that register a trivial fake tool to prove the
+>    mechanism works.
+>
+> 3. backend/app/memory/base.py: MemoryService interface with methods
+>    matching PRISM_SPEC.md section 19 (retrieve, save, invalidate_stale) as
+>    method signatures with a minimal working implementation backed by a
+>    simple table sufficient to pass this phase's tests (the full three-
+>    category schema from section 19.1 will be completed in a later
+>    dedicated memory phase - for now this only needs to exist and be
+>    callable, not be feature-complete).
+>
+> 4. Tables and models for AgentRun, ToolCall, ModelExecution matching
+>    PRISM_SPEC.md sections 20 and 25 (fields: as specified). Alembic
+>    migration adding them.
+>
+> 5. backend/app/tracing/hooks.py: HookManager with pre_tool, post_tool, and
+>    model_execution methods that persist to the tables above, sanitizing any
+>    argument that looks like a credential before storage.
+>
+> 6. backend/app/agent/controller.py: a minimal AgentController.run(task)
+>    that: creates an AgentRun row, calls MockProvider via the LLMProvider
+>    abstraction from Phase 3 wrapped with a model_execution hook call,
+>    returns a trivially schema-validated result. This is intentionally not
+>    yet doing task classification, tool selection, or bounded iteration -
+>    that is built in a later dedicated agent phase. Its only job right now
+>    is to prove: task in -> model call -> hook recorded -> AgentRun
+>    persisted -> validated result out.
+>
+> 7. backend/tests/test_agent_skeleton.py: an end-to-end test that calls
+>    AgentController.run() with MockProvider configured to return a known
+>    response, then asserts an AgentRun row exists with a linked
+>    ModelExecution row showing the mock model's name and a successful
+>    validation status.
+>
+> Out of scope: real retrieval, real tools, real task classification, real
+> bounded iteration, real memory categories, real flow tracing or Q&A. This
+> phase is scaffolding only, per PRISM_SPEC.md's Week 5 scope.
+>
+> Acceptance conditions:
+>
+> - All previous tests still pass.
+> - The new end-to-end test passes using only MockProvider.
+> - No part of this phase makes a real network call.
+>
+> Append a prompts.md entry. Update README.md status to
+> "Status: Phase 4 complete" only after tests pass. Note in README that this
+> completes the Week 5 scaffold milestone from PRISM_SPEC.md.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added the Evidence schema, empty ToolRegistry and Tool protocol, minimal persisted MemoryService, agent trace ORM models and hooks with recursive credential redaction, and a minimal schema-validating AgentController path through MockProvider. Added the Section 25 Session table as the required foreign-key target for AgentRun without implementing conversation behavior.
+
+**Resulting module/commit:** `backend/app/evidence/`, `backend/app/tools/`, `backend/app/memory/`, `backend/app/tracing/`, `backend/app/agent/`, agent trace models in `backend/app/models/`, `backend/alembic/versions/0003_add_agent_scaffold_tables.py`, and `backend/tests/test_agent_skeleton.py`.
+
+**Test result:** All 25 backend tests and the existing frontend test passed, including the mocked end-to-end agent path and tests for tool registration, credential sanitization, minimal memory persistence, and the Evidence schema. Alembic revision 0003 applied to PostgreSQL, all five scaffold tables were confirmed present, Docker Compose validated, and the migrated backend returned `{"status":"ok"}` from `/health`. No test made a real model or other network call.
