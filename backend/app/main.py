@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.routes.auth import router as auth_router
+from app.api.routes.models import router as models_router
 from app.auth.security import require_jwt_secret
 from app.config import get_settings
 
@@ -17,6 +18,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="Prism", lifespan=lifespan)
     app.include_router(auth_router)
+    app.include_router(models_router)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
