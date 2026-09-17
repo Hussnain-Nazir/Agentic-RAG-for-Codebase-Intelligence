@@ -15,4 +15,8 @@ Prerequisites: Python 3.11 or newer, Node.js 20 or newer, and Docker with Docker
 
 For direct development, install `backend/requirements.txt` and run `uvicorn app.main:app --reload` from `backend/`. Run `npm install` followed by `npm run dev` from `frontend/`.
 
-Status: Phase 5 complete
+## [MANUAL] GitHub App setup
+
+Create a GitHub App with read-only Contents and Metadata permissions. Set its setup callback URL to the backend `/github/callback` endpoint, generate a private key, mount that PEM file only into the backend container, and set `GITHUB_APP_ID` plus `GITHUB_APP_PRIVATE_KEY_PATH` in `.env`. Install the app only on repositories Prism should be allowed to read. Do not place the private key or installation tokens in the frontend, repository, logs, or model context.
+
+Status: Phase 6 complete

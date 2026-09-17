@@ -26,8 +26,6 @@ from app.models import (
     RepositorySourceType,
     User,
 )
-from app.sources.base import RepositorySource
-from app.sources.github import GitHubRepositorySource
 
 TEST_SECRET = "phase-two-test-secret-at-least-32-bytes"
 
@@ -233,18 +231,3 @@ def test_repository_dependency_returns_repository_for_owner(
     )
     assert response.status_code == 200
     assert response.json() == {"repository_id": str(repository_id)}
-
-
-def test_github_source_stub_enforces_not_implemented() -> None:
-    source: RepositorySource = GitHubRepositorySource()
-    async def call_methods() -> None:
-        with pytest.raises(NotImplementedError, match="not implemented"):
-            await source.list_files("main")
-        with pytest.raises(NotImplementedError, match="not implemented"):
-            await source.get_file_content("main", "app.py")
-        with pytest.raises(NotImplementedError, match="not implemented"):
-            await source.get_file_prefix("main", "app.py", 8192)
-        with pytest.raises(NotImplementedError, match="not implemented"):
-            await source.get_revision("main")
-
-    asyncio.run(call_methods())
