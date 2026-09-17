@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -49,6 +49,7 @@ class RepositoryIndex(Base):
     files_discovered: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     files_processed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     files_failed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    size_warning: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     failure_reason: Mapped[str] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

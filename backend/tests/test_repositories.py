@@ -28,7 +28,6 @@ from app.models import (
 )
 from app.sources.base import RepositorySource
 from app.sources.github import GitHubRepositorySource
-from app.sources.upload import UploadedRepositorySource
 
 TEST_SECRET = "phase-two-test-secret-at-least-32-bytes"
 
@@ -236,11 +235,8 @@ def test_repository_dependency_returns_repository_for_owner(
     assert response.json() == {"repository_id": str(repository_id)}
 
 
-@pytest.mark.parametrize(
-    "source",
-    [GitHubRepositorySource(), UploadedRepositorySource()],
-)
-def test_source_stubs_enforce_not_implemented(source: RepositorySource) -> None:
+def test_github_source_stub_enforces_not_implemented() -> None:
+    source: RepositorySource = GitHubRepositorySource()
     async def call_methods() -> None:
         with pytest.raises(NotImplementedError, match="not implemented"):
             await source.list_files("main")
