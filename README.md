@@ -13,4 +13,4 @@ Prerequisites: Python 3.11 or newer, Node.js 20 or newer, and Docker with Docker
 
 For direct development, install `backend/requirements.txt` and run `uvicorn app.main:app --reload` from `backend/`. Run `npm install` followed by `npm run dev` from `frontend/`.
 
-Status: Phase 2 complete
+Status: Phase 3 complete

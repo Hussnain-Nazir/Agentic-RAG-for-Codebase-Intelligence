@@ -194,3 +194,74 @@
 **Resulting module/commit:** `backend/app/models/`, `backend/app/sources/`, `backend/app/api/deps.py`, `backend/alembic/versions/0002_add_repository_source_tables.py`, and `backend/tests/test_repositories.py`.
 
 **Test result:** All 14 backend tests passed. Alembic upgraded the live PostgreSQL database from revision 0001 to 0002, and direct schema inspection confirmed the required tables, enums, indexes, uniqueness constraints, and foreign-key deletion behavior.
+
+### 2026-09-17 - Phase 3 LLM provider abstraction
+
+**Prompt:**
+
+> Read PRISM_SPEC.md section 21 (LLM Architecture) in full before starting.
+> Inspect backend/app/config.py from Phase 0 to see how settings are currently
+> loaded.
+>
+> This is Phase 3 of Prism. Implement:
+>
+> 1. backend/app/llm/base.py: the LLMProvider protocol from PRISM_SPEC.md
+>    section 21 (complete(messages, schema, timeout_s) -> LLMResult), plus
+>    Message and LLMResult data classes (LLMResult includes: content,
+>    input_tokens, output_tokens, latency_ms, raw_response).
+>
+> 2. backend/app/llm/openai_compatible.py: OpenAICompatibleProvider(name,
+>    base_url, api_key, timeout_s) calling an OpenAI-compatible
+>    /chat/completions style endpoint over HTTP (use httpx). Do not hard-code
+>    any specific provider's base URL, model name, or API key anywhere - all
+>    three must come from the caller's configuration.
+>
+> 3. backend/app/llm/mock.py: MockProvider returning deterministic, canned
+>    responses. It must support returning either plain text or content that
+>    parses against a given Pydantic schema, configurable per test via a
+>    simple canned-response list or callback, so tests can assert exact
+>    agent/tool behavior against known model output.
+>
+> 4. backend/app/llm/factory.py: get_model_a() and get_model_b() functions
+>    constructing OpenAICompatibleProvider instances from settings
+>    (MODEL_A_NAME, MODEL_A_BASE_URL, MODEL_A_API_KEY, MODEL_A_TIMEOUT and the
+>    Model B equivalents). Both are equal peers - do not name one "primary" or
+>    "default" anywhere in code, comments, or variable names.
+>
+> 5. backend/app/api/routes/models.py: GET /models/config returning
+>    {"model_a": {"name": ...}, "model_b": {"name": ...}} - never api keys or
+>    base urls. Requires authentication.
+>
+> 6. Tests in backend/tests/test_llm.py: MockProvider returns configured
+>    responses deterministically; OpenAICompatibleProvider is tested with a
+>    mocked HTTP transport (httpx MockTransport or respx), not a real network
+>    call; GET /models/config returns names only and never leaks keys, using
+>    test-only placeholder model configuration.
+>
+> 7. A standalone manual script at backend/scripts/smoke_test_model.py that
+>    accepts a slot (a or b) as an argument, loads real settings, and prints
+>    the raw response from a real call - this script is never invoked by the
+>    automated test suite and is documented as manual-only in a comment at
+>    its top.
+>
+> Out of scope: the agent controller, tools, retrieval - this phase only
+> builds and tests the model abstraction in isolation.
+>
+> Acceptance conditions:
+>
+> - All previous tests still pass.
+> - New tests pass with zero real network calls.
+> - GET /models/config never includes model_a.api_key or similar fields.
+> - Compare Models logic is NOT implemented yet - this phase provides only the
+>   per-slot provider abstraction.
+>
+> Append a prompts.md entry. Update README.md status to
+> "Status: Phase 3 complete" only after tests pass.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added the provider protocol and result types, configurable OpenAI-compatible HTTP provider, deterministic MockProvider, equal Model A and Model B factories, authenticated model-name configuration endpoint, manual-only smoke script, and isolated Phase 3 tests.
+
+**Resulting module/commit:** `backend/app/llm/`, `backend/app/api/routes/models.py`, `backend/scripts/smoke_test_model.py`, `backend/app/main.py`, and `backend/tests/test_llm.py`.
+
+**Test result:** All 20 backend tests passed with the provider HTTP test using `httpx.MockTransport` and no real model calls. The existing frontend test passed. Docker Compose configuration validated, the backend image rebuilt successfully, and the rebuilt service returned `{"status":"ok"}` from `/health`.
