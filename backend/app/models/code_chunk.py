@@ -38,6 +38,11 @@ class CodeChunk(Base):
             "repository_id",
             "repository_index_id",
         ),
+        Index(
+            "ix_code_chunks_content_embedding_version",
+            "content_hash",
+            "embedding_model_version",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -67,6 +72,7 @@ class CodeChunk(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     embedding: Mapped[list[float]] = mapped_column(Vector(384), nullable=True)
+    embedding_model_version: Mapped[str] = mapped_column(String(255), nullable=True)
     chunk_metadata: Mapped[dict[str, Any]] = mapped_column(
         "metadata",
         JSON().with_variant(JSONB, "postgresql"),

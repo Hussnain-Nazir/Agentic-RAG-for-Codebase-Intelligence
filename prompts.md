@@ -680,3 +680,71 @@
 **Resulting module/commit:** `backend/app/chunking/`, `backend/app/ingestion/chunking_stage.py`, `backend/app/models/code_chunk.py`, `backend/alembic/versions/0007_add_code_chunks.py`, and `backend/tests/test_chunking.py`.
 
 **Test result:** All 54 backend tests passed. The frontend Vitest suite passed. Alembic upgraded PostgreSQL from revision 0006 to 0007, the `vector` extension was confirmed present, the `embedding` column was confirmed as nullable pgvector, and Docker Compose configuration validated.
+
+### 2026-09-18 - Phase 9 embeddings and indexing
+
+**Prompt:**
+
+> Read PRISM_SPEC.md section 13 (Embeddings & Indexing) in full before
+> starting. Inspect backend/app/chunking/ and backend/app/models/code_chunk.py
+> from Phase 8.
+>
+> This is Phase 9 of Prism. Implement:
+>
+> 1. backend/app/embeddings/base.py: the EmbeddingProvider protocol
+>    (dimensions, embed_batch) from PRISM_SPEC.md section 13.
+>
+> 2. backend/app/embeddings/local_provider.py: LocalEmbeddingProvider loading
+>    BAAI/bge-small-en-v1.5 via sentence-transformers, batching in groups of
+>    32 as specified, configurable via EMBEDDING_MODEL_NAME.
+>
+> 3. backend/app/ingestion/embedding_stage.py: embed_repository_chunks(...)
+>    that, for each chunk needing an embedding, first checks whether a chunk
+>    with the same content_hash and current embedding_model_version already
+>    has an embedding (reuse it, do not recompute), and otherwise batches
+>    remaining chunks through LocalEmbeddingProvider and persists the vector.
+>    Track embedding_model_version (a simple settings-derived string) so a
+>    future model change is detected rather than silently mixing embedding
+>    spaces.
+>
+> 4. Alembic migration adding the ivfflat index on code_chunks.embedding
+>    using vector_cosine_ops with lists=100, and a composite btree index on
+>    (repository_id, repository_index_id).
+>
+> 5. backend/app/retrieval/vector_search.py: semantic_search(repository_id,
+>    repository_index_id, query_embedding, top_k) -> ranked CodeChunk rows
+>    using cosine distance, always filtering by repository_id and
+>    repository_index_id before the ANN search.
+>
+> 6. Tests in backend/tests/test_embeddings.py: embedding two chunks with
+>    identical content produces the same stored vector without a second
+>    model call (assert the embedding call count, using a fast fake
+>    embedding model in tests rather than downloading the real model in CI if
+>    that is more practical - document whichever choice you make and why);
+>    semantic_search on a small fixture repository returns the expected
+>    most-similar chunk for a known query; semantic_search never returns
+>    chunks from a different repository_id even when content is similar.
+>
+> Out of scope: lexical search, symbol search, hybrid merging, the
+> ContextBuilder - this phase only makes vector search work in isolation.
+>
+> Acceptance conditions:
+>
+> - All previous tests still pass.
+> - Re-running embedding generation on an unchanged repository performs zero
+>   new embedding computations.
+> - semantic_search enforces repository isolation in every test case.
+>
+> Append a prompts.md entry, noting explicitly whether real or fake embedding
+> models were used in the automated test suite and why. Update README.md
+> status to "Status: Phase 9 complete" only after tests pass.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added the provider-agnostic embedding protocol, the local sentence-transformers provider with 32-item batching and 384-dimensional validation, settings-derived embedding model version tracking, content-hash reuse across chunks, and isolated cosine vector search. Added the Phase 9 PostgreSQL indexes and a lookup index for content hash plus embedding model version.
+
+**Modified/rejected:** Automated tests use fake embedding models and never download `BAAI/bge-small-en-v1.5`. This keeps the suite deterministic, fast, and independent of network access while directly testing 32-item batching, vector persistence, content-hash reuse, reruns with zero computations, cosine ranking, and repository isolation. The production provider still loads the configured sentence-transformers model. The composite and ivfflat indexes had been created prematurely in revision 0007; their definitions were moved to revision 0008, which conditionally removes the earlier indexes before recreating them so both existing and fresh databases upgrade safely.
+
+**Resulting module/commit:** `backend/app/embeddings/`, `backend/app/ingestion/embedding_stage.py`, `backend/app/retrieval/vector_search.py`, `backend/app/models/code_chunk.py`, `backend/alembic/versions/0008_add_embedding_indexes.py`, `backend/requirements.txt`, and `backend/tests/test_embeddings.py`.
+
+**Test result:** All 58 backend tests passed in Docker. The frontend Vitest suite and production build passed. Alembic upgraded the existing PostgreSQL database from revision 0007 to 0008, and a separate empty verification database successfully applied the full migration chain through 0008. PostgreSQL confirmed the nullable embedding model version column, the composite repository/version B-tree index, and the ivfflat cosine index with `lists=100`.

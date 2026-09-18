@@ -72,24 +72,9 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["repository_index_id"], ["repository_indexes.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        "ix_code_chunks_repository_index",
-        "code_chunks",
-        ["repository_id", "repository_index_id"],
-    )
-    op.create_index(
-        "ix_code_chunks_embedding_cosine",
-        "code_chunks",
-        ["embedding"],
-        postgresql_using="ivfflat",
-        postgresql_ops={"embedding": "vector_cosine_ops"},
-        postgresql_with={"lists": 100},
-    )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_code_chunks_embedding_cosine", table_name="code_chunks")
-    op.drop_index("ix_code_chunks_repository_index", table_name="code_chunks")
     op.drop_table("code_chunks")
     bind = op.get_bind()
     chunk_type.drop(bind, checkfirst=True)
