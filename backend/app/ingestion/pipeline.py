@@ -26,6 +26,7 @@ class NormalizedFile:
     content_hash: str | None
     status: RepositoryFileStatus
     size_bytes: int
+    content: str | None
 
 
 async def discover_and_normalize(
@@ -62,6 +63,13 @@ async def discover_and_normalize(
                 ),
                 status=status,
                 size_bytes=len(content) if content is not None else file_ref.size_bytes,
+                content=(
+                    content.decode("utf-8", errors="replace")
+                    if content is not None
+                    and status is RepositoryFileStatus.OK
+                    and suffix in LANGUAGES
+                    else None
+                ),
             )
         )
     return normalized_files

@@ -526,3 +526,83 @@
 **Resulting module/commit:** `backend/app/api/routes/github.py`, `backend/app/github/client.py`, `backend/app/models/github_installation_attempt.py`, Alembic revision `0005`, GitHub integration tests, environment configuration, and `README.md`.
 
 **Test result:** All 41 backend tests passed, including 13 GitHub integration tests with no live network calls. The frontend Vitest suite passed in Docker, Docker Compose configuration validated, Alembic upgraded PostgreSQL to revision 0005, and the rebuilt backend returned `{"status":"ok"}`.
+
+### 2026-09-18 - Phase 7 code parsing and structural analysis
+
+**Prompt:**
+
+> Read PRISM_SPEC.md section 11 (Code Parsing & Structural Analysis) in full
+> before starting. Inspect backend/app/models/ for RepositoryFile, and
+> backend/app/ingestion/pipeline.py from Phase 5.
+>
+> This is Phase 7 of Prism. Implement:
+>
+> 1. backend/app/parsing/base.py: the TreeSitterParser protocol and
+>    ParsedFile/ExtractedSymbol/ImportRef data classes exactly as defined in
+>    PRISM_SPEC.md section 11.
+>
+> 2. backend/app/parsing/python_parser.py,
+>    backend/app/parsing/javascript_parser.py,
+>    backend/app/parsing/typescript_parser.py (the latter handles both .ts
+>    and .tsx, and javascript_parser.py handles both .js and .jsx) - each
+>    using the tree-sitter grammars for its language to extract: functions,
+>    methods, classes, components (JS/TS: exported function/const returning
+>    JSX, by structural heuristic), hooks (JS/TS: names matching ^use[A-Z]),
+>    interfaces, types, imports, exports, and symbol definitions. Where
+>    practical, also detect API routes (FastAPI-style decorators for Python;
+>    Express-style route registration for JS/TS) and test files (naming
+>    convention), tagging them in ParsedFile metadata.
+>
+> 3. backend/app/parsing/relationships.py: extract CodeRelationship records
+>    (kind: CALLS, IMPORTS, REFERENCES, API_CALL, EXTENDS) with confidence
+>    high for direct AST-resolvable references and low for heuristic/name-
+>    based matches, per PRISM_SPEC.md section 11.
+>
+> 4. backend/app/parsing/fallback.py: on any parser exception or unparseable
+>    content, produce a single fallback ParsedFile preserving file path,
+>    best-effort language guess, and the full line range, with parse_ok=False
+>    and fallback_used=True. This must never raise - it always returns a
+>    usable ParsedFile.
+>
+> 5. backend/app/models/code_symbol.py and
+>    backend/app/models/code_relationship.py matching PRISM_SPEC.md section
+>    25's code_symbols/code_relationships tables. Alembic migration adding
+>    them.
+>
+> 6. backend/app/ingestion/parsing_stage.py: parse_repository_files(files:
+>    list[RepositoryFile]) -> iterates supported files, calls the right
+>    parser by extension, persists CodeSymbol/CodeRelationship rows, and
+>    records per-file parse failures without stopping the loop for other
+>    files.
+>
+> 7. Tests in backend/tests/test_parsing.py with small fixture files per
+>    language (a Python module with a class and functions, a JS file with a
+>    component and a hook, a TS file with an interface and a type) verifying
+>    expected symbols/relationships are extracted, plus one deliberately
+>    malformed file per language proving fallback behavior triggers and does
+>    not raise.
+>
+> Out of scope: chunking, embeddings, indexing - this phase only produces
+> symbols and relationships, not CodeChunk rows.
+>
+> Acceptance conditions:
+>
+> - All previous tests still pass.
+> - A repository-wide parse run over a fixture with one malformed file still
+>   reaches a state where all other files are correctly parsed (proves
+>   per-file isolation of failures).
+> - No relationship is recorded with confidence "high" unless it is backed by
+>   an actual AST-resolvable reference, not a name-string heuristic.
+>
+> Append a prompts.md entry. Update README.md status to
+> "Status: Phase 7 complete" only after tests pass.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added Tree-sitter parser adapters for all five supported source extensions, structural symbol and import extraction, route and test-file metadata, relationship extraction with constrained confidence, non-raising fallback parsing, persisted code symbol and relationship models, and repository-wide parsing integrated into the shared ingestion path. Added persisted source content only for supported, safe source files so parsing remains available after temporary ZIP extraction ends.
+
+**Modified/rejected:** Kept chunking, embeddings, retrieval, and later indexing behavior out of scope. Relationships receive high confidence only when a parsed AST reference resolves to a definition in the same file; name-only and external matches remain low confidence.
+
+**Resulting module/commit:** `backend/app/parsing/`, `backend/app/ingestion/parsing_stage.py`, `backend/app/models/code_symbol.py`, `backend/app/models/code_relationship.py`, `backend/alembic/versions/0006_add_code_structure.py`, parser fixtures, and `backend/tests/test_parsing.py`.
+
+**Test result:** All 48 backend tests passed. The frontend Vitest suite passed. Alembic upgraded PostgreSQL from revision 0005 to 0006 successfully, and Docker Compose configuration remained valid.

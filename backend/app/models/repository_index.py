@@ -9,6 +9,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
+    from app.models.code_relationship import CodeRelationship
+    from app.models.code_symbol import CodeSymbol
     from app.models.repository import Repository
     from app.models.repository_file import RepositoryFile
 
@@ -59,6 +61,16 @@ class RepositoryIndex(Base):
 
     repository: Mapped["Repository"] = relationship(back_populates="indexes")
     files: Mapped[list["RepositoryFile"]] = relationship(
+        back_populates="repository_index",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    symbols: Mapped[list["CodeSymbol"]] = relationship(
+        back_populates="repository_index",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    relationships: Mapped[list["CodeRelationship"]] = relationship(
         back_populates="repository_index",
         cascade="all, delete-orphan",
         passive_deletes=True,

@@ -2,12 +2,13 @@ import enum
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Enum, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Enum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
 if TYPE_CHECKING:
+    from app.models.code_symbol import CodeSymbol
     from app.models.repository_index import RepositoryIndex
 
 
@@ -43,5 +44,11 @@ class RepositoryFile(Base):
         nullable=False,
     )
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=True)
 
     repository_index: Mapped["RepositoryIndex"] = relationship(back_populates="files")
+    symbols: Mapped[list["CodeSymbol"]] = relationship(
+        back_populates="file",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )

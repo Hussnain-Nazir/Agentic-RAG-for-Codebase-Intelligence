@@ -15,6 +15,7 @@ from app.auth.dependencies import get_current_user
 from app.config import Settings, get_settings
 from app.db.session import get_db
 from app.ingestion.pipeline import discover_and_normalize, exceeds_mvp_file_target
+from app.ingestion.parsing_stage import parse_repository_files
 from app.ingestion.security import ZipSafetyError, safe_extract
 from app.github.client import GitHubClient
 from app.github.errors import (
@@ -140,19 +141,29 @@ async def _persist_repository(
         item.status is RepositoryFileStatus.OK for item in normalized
     )
     repository_index.size_warning = exceeds_mvp_file_target(normalized)
+    persisted_files: list[RepositoryFile] = []
     for item in normalized:
-        db.add(
-            RepositoryFile(
-                repository_index_id=repository_index.id,
-                path=item.path,
-                language=item.language,
-                github_sha=item.github_sha,
-                content_hash=item.content_hash,
-                status=item.status,
-                size_bytes=item.size_bytes,
-            )
+        repository_file = RepositoryFile(
+            repository_index_id=repository_index.id,
+            path=item.path,
+            language=item.language,
+            github_sha=item.github_sha,
+            content_hash=item.content_hash,
+            status=item.status,
+            size_bytes=item.size_bytes,
+            content=item.content,
         )
-    repository_index.state = RepositoryIndexState.READY
+        db.add(repository_file)
+        persisted_files.append(repository_file)
+    await db.flush()
+    repository_index.state = RepositoryIndexState.PARSING
+    parsed_files = await parse_repository_files(persisted_files)
+    repository_index.files_failed = sum(not item.parse_ok for item in parsed_files)
+    repository_index.state = (
+        RepositoryIndexState.PARTIAL
+        if repository_index.files_failed
+        else RepositoryIndexState.READY
+    )
     await db.commit()
 
     return RepositoryImportResponse(

@@ -1,4 +1,10 @@
 from app.models.agent_run import AgentRun, AgentRunStatus
+from app.models.code_relationship import (
+    CodeRelationship,
+    CodeRelationshipConfidence,
+    CodeRelationshipKind,
+)
+from app.models.code_symbol import CodeSymbol
 from app.models.github_installation import GitHubInstallation, GitHubInstallationStatus
 from app.models.github_installation_attempt import GitHubInstallationAttempt
 from app.models.memory_item import MemoryItem
@@ -17,6 +23,10 @@ from app.models.user import User
 __all__ = [
     "AgentRun",
     "AgentRunStatus",
+    "CodeRelationship",
+    "CodeRelationshipConfidence",
+    "CodeRelationshipKind",
+    "CodeSymbol",
     "GitHubInstallation",
     "GitHubInstallationAttempt",
     "GitHubInstallationStatus",
