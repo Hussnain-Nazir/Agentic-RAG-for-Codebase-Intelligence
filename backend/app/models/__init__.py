@@ -1,4 +1,5 @@
 from app.models.agent_run import AgentRun, AgentRunStatus
+from app.models.code_chunk import CodeChunk, CodeChunkType
 from app.models.code_relationship import (
     CodeRelationship,
     CodeRelationshipConfidence,
@@ -23,6 +24,8 @@ from app.models.user import User
 __all__ = [
     "AgentRun",
     "AgentRunStatus",
+    "CodeChunk",
+    "CodeChunkType",
     "CodeRelationship",
     "CodeRelationshipConfidence",
     "CodeRelationshipKind",

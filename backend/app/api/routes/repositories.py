@@ -16,6 +16,7 @@ from app.config import Settings, get_settings
 from app.db.session import get_db
 from app.ingestion.pipeline import discover_and_normalize, exceeds_mvp_file_target
 from app.ingestion.parsing_stage import parse_repository_files
+from app.ingestion.chunking_stage import chunk_repository_files
 from app.ingestion.security import ZipSafetyError, safe_extract
 from app.github.client import GitHubClient
 from app.github.errors import (
@@ -159,6 +160,8 @@ async def _persist_repository(
     repository_index.state = RepositoryIndexState.PARSING
     parsed_files = await parse_repository_files(persisted_files)
     repository_index.files_failed = sum(not item.parse_ok for item in parsed_files)
+    repository_index.state = RepositoryIndexState.INDEXING
+    await chunk_repository_files(persisted_files, parsed_files)
     repository_index.state = (
         RepositoryIndexState.PARTIAL
         if repository_index.files_failed

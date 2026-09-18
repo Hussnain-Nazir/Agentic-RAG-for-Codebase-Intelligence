@@ -15,7 +15,14 @@ LANGUAGES = {
     ".py": "python",
     ".ts": "typescript",
     ".tsx": "tsx",
+    ".json": "config",
+    ".yaml": "config",
+    ".yml": "config",
+    ".toml": "config",
+    ".md": "documentation",
+    ".txt": "documentation",
 }
+PERSISTED_TEXT_EXTENSIONS = set(LANGUAGES)
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,7 +74,7 @@ async def discover_and_normalize(
                     content.decode("utf-8", errors="replace")
                     if content is not None
                     and status is RepositoryFileStatus.OK
-                    and suffix in LANGUAGES
+                    and suffix in PERSISTED_TEXT_EXTENSIONS
                     else None
                 ),
             )

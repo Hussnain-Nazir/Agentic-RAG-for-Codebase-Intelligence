@@ -9,6 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
+    from app.models.code_chunk import CodeChunk
     from app.models.code_relationship import CodeRelationship
     from app.models.code_symbol import CodeSymbol
     from app.models.repository import Repository
@@ -71,6 +72,11 @@ class RepositoryIndex(Base):
         passive_deletes=True,
     )
     relationships: Mapped[list["CodeRelationship"]] = relationship(
+        back_populates="repository_index",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    chunks: Mapped[list["CodeChunk"]] = relationship(
         back_populates="repository_index",
         cascade="all, delete-orphan",
         passive_deletes=True,

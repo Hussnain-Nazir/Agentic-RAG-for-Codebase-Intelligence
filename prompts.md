@@ -606,3 +606,77 @@
 **Resulting module/commit:** `backend/app/parsing/`, `backend/app/ingestion/parsing_stage.py`, `backend/app/models/code_symbol.py`, `backend/app/models/code_relationship.py`, `backend/alembic/versions/0006_add_code_structure.py`, parser fixtures, and `backend/tests/test_parsing.py`.
 
 **Test result:** All 48 backend tests passed. The frontend Vitest suite passed. Alembic upgraded PostgreSQL from revision 0005 to 0006 successfully, and Docker Compose configuration remained valid.
+
+### 2026-09-18 - Phase 8 code-aware chunking
+
+**Prompt:**
+
+> Read PRISM_SPEC.md section 12 (Code-Aware Chunking) in full before starting.
+> Inspect backend/app/parsing/ from Phase 7 and the CodeSymbol model.
+>
+> This is Phase 8 of Prism. Implement:
+>
+> 1. backend/app/chunking/base.py: Chunker protocol producing a list of
+>    ChunkDraft objects (pre-persistence) with all CodeChunk fields except id/
+>    embedding/timestamps.
+>
+> 2. backend/app/chunking/python_chunker.py and
+>    backend/app/chunking/js_ts_chunker.py implementing structural chunking
+>    per PRISM_SPEC.md section 12 for each language family, operating on the
+>    ParsedFile/symbols from Phase 7.
+>
+> 3. backend/app/chunking/fallback_chunker.py: one fallback chunk per file
+>    when parse_ok is False, matching section 12.2's fallback behavior.
+>
+> 4. backend/app/chunking/document_chunker.py: paragraph/heading-based
+>    chunking for Markdown/TXT, and text-extracted PDF, per section 12.2,
+>    producing chunks tagged source_type=DOCUMENTATION.
+>
+> 5. Explicit handling of every edge case in PRISM_SPEC.md section 12.2:
+>    very large function/class splitting with 200-char overlap and shared
+>    parent_symbol metadata; tiny adjacent symbol merging up to the 1,500-char
+>    cap; module-level code as one MODULE_SECTION chunk; comments/docstrings
+>    kept attached to their owning symbol; config files as one chunk per file;
+>    fallback chunks as specified.
+>
+> 6. backend/app/models/code_chunk.py matching PRISM_SPEC.md section 12.1
+>    exactly, including a content_hash column (sha256 of the chunk content)
+>    and an embedding vector(384) column (pgvector extension must be enabled
+>    in this migration if not already). Alembic migration adding the table
+>    and enabling the pgvector extension.
+>
+> 7. backend/app/ingestion/chunking_stage.py: chunk_repository_files(...)
+>    iterating parsed files, calling the correct chunker, computing
+>    content_hash per chunk, and persisting CodeChunk rows (embedding left
+>    null at this phase).
+>
+> 8. Tests in backend/tests/test_chunking.py covering: a large function
+>    splits into overlapping sub-chunks retaining the full symbol's line
+>    range in metadata; several tiny exports merge into one MODULE_SECTION
+>    chunk; a config file produces exactly one chunk; a Markdown supplementary
+>    document chunks by heading/paragraph with source_type=DOCUMENTATION; a
+>    fallback-parsed file produces exactly one FALLBACK chunk; identical
+>    content in two different chunks produces the same content_hash.
+>
+> Out of scope: embeddings, pgvector similarity search, retrieval - this phase
+> only produces chunk rows with hashes, no embedding values.
+>
+> Acceptance conditions:
+>
+> - All previous tests still pass.
+> - pgvector extension is enabled via migration, not manually.
+> - Every CodeChunk row has a non-null content_hash and correct start_line/
+>   end_line even after splitting or merging.
+>
+> Append a prompts.md entry. Update README.md status to
+> "Status: Phase 8 complete" only after tests pass.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added structural chunkers for the supported code languages, fallback and document chunkers, config-file handling, large-symbol overlap splitting, large-class method splitting, tiny-symbol merging, module-section extraction, comment attachment, and deterministic SHA-256 hashes. Added CodeChunk persistence with a nullable 384-dimensional pgvector column and integrated chunking into the shared ZIP and GitHub ingestion path.
+
+**Modified/rejected:** Kept embedding generation and similarity retrieval out of scope. The SQLAlchemy attribute for the database `metadata` column is named `chunk_metadata` because `metadata` is reserved by SQLAlchemy's declarative base; the persisted column name remains exactly `metadata`.
+
+**Resulting module/commit:** `backend/app/chunking/`, `backend/app/ingestion/chunking_stage.py`, `backend/app/models/code_chunk.py`, `backend/alembic/versions/0007_add_code_chunks.py`, and `backend/tests/test_chunking.py`.
+
+**Test result:** All 54 backend tests passed. The frontend Vitest suite passed. Alembic upgraded PostgreSQL from revision 0006 to 0007, the `vector` extension was confirmed present, the `embedding` column was confirmed as nullable pgvector, and Docker Compose configuration validated.
