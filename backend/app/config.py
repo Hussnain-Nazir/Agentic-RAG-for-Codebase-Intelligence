@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     github_client_id: str | None = None
     github_client_secret: str | None = None
     github_webhook_secret: str | None = None
+    github_callback_success_url: str = "http://localhost:5173/?github=connected"
 
     model_a_name: str | None = None
     model_a_base_url: str | None = None

@@ -1,5 +1,6 @@
 from app.models.agent_run import AgentRun, AgentRunStatus
 from app.models.github_installation import GitHubInstallation, GitHubInstallationStatus
+from app.models.github_installation_attempt import GitHubInstallationAttempt
 from app.models.memory_item import MemoryItem
 from app.models.model_execution import ModelExecution, ModelSlot
 from app.models.repository import (
@@ -17,6 +18,7 @@ __all__ = [
     "AgentRun",
     "AgentRunStatus",
     "GitHubInstallation",
+    "GitHubInstallationAttempt",
     "GitHubInstallationStatus",
     "MemoryItem",
     "ModelExecution",

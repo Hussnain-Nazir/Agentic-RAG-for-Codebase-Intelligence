@@ -9,6 +9,7 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.models.github_installation import GitHubInstallation
+    from app.models.github_installation_attempt import GitHubInstallationAttempt
     from app.models.repository import Repository
     from app.models.session import Session
 
@@ -25,6 +26,11 @@ class User(Base):
         nullable=False,
     )
     github_installations: Mapped[list["GitHubInstallation"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    github_installation_attempts: Mapped[list["GitHubInstallationAttempt"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
         passive_deletes=True,

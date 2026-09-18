@@ -35,14 +35,23 @@ class GitHubClient:
         settings: Settings | None = None,
         *,
         base_url: str = "https://api.github.com",
+        oauth_base_url: str = "https://github.com",
         transport: httpx.AsyncBaseTransport | None = None,
         sleep: Sleep = asyncio.sleep,
     ) -> None:
         self._settings = settings or get_settings()
         self._base_url = base_url.rstrip("/")
+        self._oauth_base_url = oauth_base_url.rstrip("/")
         self._transport = transport
         self._sleep = sleep
         self._token_cache: dict[int, CachedInstallationToken] = {}
+
+    @property
+    def user_authorization_configured(self) -> bool:
+        return bool(
+            self._settings.github_client_id
+            and self._settings.github_client_secret
+        )
 
     def _app_jwt(self) -> str:
         if not self._settings.github_app_id:
@@ -190,6 +199,61 @@ class GitHubClient:
             error_kind="installation",
         )
         return response.json()
+
+    async def exchange_user_code(self, code: str) -> str:
+        if not self.user_authorization_configured:
+            raise GitHubApiError(
+                "GitHub user authorization is not configured"
+            )
+        try:
+            async with httpx.AsyncClient(
+                transport=self._transport,
+                timeout=20,
+            ) as client:
+                response = await client.post(
+                    f"{self._oauth_base_url}/login/oauth/access_token",
+                    data={
+                        "client_id": self._settings.github_client_id,
+                        "client_secret": self._settings.github_client_secret,
+                        "code": code,
+                    },
+                    headers={"Accept": "application/json"},
+                )
+        except httpx.TimeoutException as exc:
+            raise GitHubApiError("GitHub user authorization timed out") from exc
+        if response.status_code >= 400:
+            raise GitHubApiError(
+                f"GitHub user authorization returned status {response.status_code}"
+            )
+        payload = response.json()
+        access_token = payload.get("access_token")
+        if not isinstance(access_token, str) or not access_token:
+            raise GitHubApiError("GitHub user authorization did not return a token")
+        return access_token
+
+    async def list_user_installations(
+        self,
+        user_access_token: str,
+    ) -> list[dict[str, Any]]:
+        url = "/user/installations"
+        installations: list[dict[str, Any]] = []
+        while url:
+            response = await self._request(
+                "GET",
+                url,
+                token=user_access_token,
+                params={"per_page": 100} if not url.startswith("http") else None,
+                error_kind="access",
+            )
+            payload = response.json()
+            page = payload.get("installations") if isinstance(payload, dict) else None
+            if not isinstance(page, list):
+                raise GitHubApiError(
+                    "GitHub user installations returned an unexpected payload"
+                )
+            installations.extend(page)
+            url = response.links.get("next", {}).get("url", "")
+        return installations
 
     async def list_installations(self) -> list[dict[str, Any]]:
         return await self._paginate("/app/installations", token=self._app_jwt())

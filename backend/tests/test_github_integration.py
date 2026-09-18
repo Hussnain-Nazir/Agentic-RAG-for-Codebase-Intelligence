@@ -4,6 +4,7 @@ import uuid
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
@@ -51,8 +52,11 @@ def github_client(handler: Any) -> GitHubClient:
         Settings(
             github_app_id="12345",
             github_app_private_key_path="unused-in-mocked-tests.pem",
+            github_client_id="test-client-id",
+            github_client_secret="test-client-secret",
         ),
         base_url="https://api.github.test",
+        oauth_base_url="https://github.test",
         transport=httpx.MockTransport(handler),
         sleep=no_sleep,
     )
@@ -199,11 +203,38 @@ def test_blob_content_decodes_github_base64_with_line_breaks() -> None:
     assert content == expected
 
 
+def test_user_authorization_exchanges_code_and_lists_installations() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/login/oauth/access_token":
+            assert request.headers["Accept"] == "application/json"
+            assert b"client_secret=test-client-secret" in request.content
+            return httpx.Response(
+                200,
+                json={"access_token": "test-user-token"},
+                request=request,
+            )
+        assert request.url.path == "/user/installations"
+        assert request.headers["Authorization"] == "Bearer test-user-token"
+        return httpx.Response(
+            200,
+            json={"installations": [{"id": 77}]},
+            request=request,
+        )
+
+    client = github_client(handler)
+    user_token = asyncio.run(client.exchange_user_code("oauth-code"))
+    installations = asyncio.run(client.list_user_installations(user_token))
+
+    assert user_token == "test-user-token"
+    assert installations == [{"id": 77}]
+
+
 class FakeGitHubClient:
     blobs = {
         "sha-app": b'def hello() -> str:\n    return "hello"\n',
         "sha-readme": b"# Fixture repository\n",
     }
+    user_authorization_configured = True
 
     async def get_app(self) -> dict[str, Any]:
         return {"html_url": "https://github.com/apps/prism-test"}
@@ -215,6 +246,17 @@ class FakeGitHubClient:
     async def get_installation(self, installation_id: int) -> dict[str, Any]:
         assert installation_id == 77
         return {"id": 77, "account": {"login": "example"}}
+
+    async def exchange_user_code(self, code: str) -> str:
+        assert code == "test-oauth-code"
+        return "test-user-token"
+
+    async def list_user_installations(
+        self,
+        user_access_token: str,
+    ) -> list[dict[str, Any]]:
+        assert user_access_token == "test-user-token"
+        return [{"id": 77, "account": {"login": "example"}}]
 
     async def list_repositories(self, installation_id: int) -> list[dict[str, Any]]:
         assert installation_id == 77
@@ -300,7 +342,13 @@ def github_import_context() -> Iterator[
             yield session
 
     def override_get_settings() -> Settings:
-        return Settings(database_url=database_url, jwt_secret=TEST_SECRET)
+        return Settings(
+            database_url=database_url,
+            jwt_secret=TEST_SECRET,
+            github_client_id="test-client-id",
+            github_client_secret="test-client-secret",
+            github_callback_success_url="http://localhost:5173/?github=connected",
+        )
 
     app = create_app()
     app.dependency_overrides[get_db] = override_get_db
@@ -364,20 +412,32 @@ def test_github_routes_persist_and_list_installation_and_repositories(
         "Authorization": f"Bearer {create_access_token(user_id, TEST_SECRET)}"
     }
 
+    async def remove_seed_installation() -> None:
+        async with session_factory() as session:
+            installation = await session.scalar(select(GitHubInstallation))
+            assert installation is not None
+            await session.delete(installation)
+            await session.commit()
+
+    asyncio.run(remove_seed_installation())
+
     install_url = client.get("/github/install-url", headers=headers)
+    state = parse_qs(urlparse(install_url.json()["url"]).query)["state"][0]
     callback = client.get(
-        "/github/callback?installation_id=77&setup_action=install",
-        headers=headers,
+        (
+            "/github/callback?installation_id=77&setup_action=install"
+            f"&code=test-oauth-code&state={state}"
+        ),
         follow_redirects=False,
     )
     installations = client.get("/github/installations", headers=headers)
 
     assert install_url.status_code == 200
-    assert install_url.json() == {
-        "url": "https://github.com/apps/prism-test/installations/new"
-    }
+    assert install_url.json()["url"].startswith(
+        "https://github.com/apps/prism-test/installations/new?state="
+    )
     assert callback.status_code == 302
-    assert callback.headers["location"] == "/?github=connected"
+    assert callback.headers["location"] == "http://localhost:5173/?github=connected"
     assert installations.status_code == 200
     assert installations.json()[0]["installation_id"] == 77
 
@@ -402,3 +462,38 @@ def test_github_routes_persist_and_list_installation_and_repositories(
             "private": True,
         }
     ]
+
+    replay = client.get(
+        (
+            "/github/callback?installation_id=77&setup_action=install"
+            f"&code=test-oauth-code&state={state}"
+        ),
+        follow_redirects=False,
+    )
+    assert replay.status_code == 400
+    assert replay.json()["detail"] == "Invalid or reused GitHub state"
+
+
+def test_github_callback_rejects_missing_or_unknown_state(
+    github_import_context: tuple[
+        TestClient,
+        async_sessionmaker[AsyncSession],
+        uuid.UUID,
+    ],
+) -> None:
+    client, _, _ = github_import_context
+
+    missing = client.get(
+        "/github/callback?installation_id=77&code=test-oauth-code",
+        follow_redirects=False,
+    )
+    unknown = client.get(
+        (
+            "/github/callback?installation_id=77&code=test-oauth-code"
+            "&state=unknown-state"
+        ),
+        follow_redirects=False,
+    )
+
+    assert missing.status_code == 400
+    assert unknown.status_code == 400

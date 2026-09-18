@@ -512,3 +512,17 @@
 **Resulting module/commit:** `backend/app/github/`, `backend/app/api/routes/github.py`, `backend/app/sources/github.py`, the shared `backend/app/api/routes/repositories.py` import route, `backend/tests/test_github_integration.py`, dependency updates, Docker entrypoint normalization, and README manual setup instructions.
 
 **Test result:** All 39 backend tests and the existing frontend test passed. Eleven GitHub tests used only `httpx.MockTransport` or an in-process fake client and covered token caching, Link pagination, typed revoked/access/deleted/branch/rate-limit/API failures, newline-wrapped blob decoding, all four routes, and a full GitHub import with persisted blob SHAs. Docker Compose validated, the rebuilt backend returned `{"status":"ok"}`, and Alembic remained at revision 0004 head. No test contacted `api.github.com`, and no private key or installation token was emitted in test output.
+
+### 2026-09-18 - Phase 6 GitHub callback security correction
+
+**Prompt:** Analyze the live GitHub App installation failure, distinguish setup problems from code problems, then correct callback authentication, secure Prism-user association, installation ownership verification, redirect behavior, and related setup documentation.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Replaced bearer authentication on the browser callback with a short-lived, one-time, database-backed state created by the authenticated install-url endpoint. Added GitHub user-code exchange and installation-access verification before associating an installation with the state-bound Prism user, plus a configurable success redirect and corrected manual setup instructions.
+
+**Modified/rejected:** Rejected removing callback authentication without replacement and rejected trusting the callback's numeric installation ID alone. The callback now requires both validated state and GitHub user authorization.
+
+**Resulting module/commit:** `backend/app/api/routes/github.py`, `backend/app/github/client.py`, `backend/app/models/github_installation_attempt.py`, Alembic revision `0005`, GitHub integration tests, environment configuration, and `README.md`.
+
+**Test result:** All 41 backend tests passed, including 13 GitHub integration tests with no live network calls. The frontend Vitest suite passed in Docker, Docker Compose configuration validated, Alembic upgraded PostgreSQL to revision 0005, and the rebuilt backend returned `{"status":"ok"}`.

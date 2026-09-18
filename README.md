@@ -2,7 +2,7 @@
 
 Prism is an agentic RAG platform for understanding, navigating, tracing, and analyzing software repositories. It combines deterministic repository structure, hybrid retrieval, bounded tool execution, persistent memory, and evidence-grounded model reasoning to answer repository-level questions without sending an entire repository to a model.
 
-Phase 4 completes the Week 5 scaffold milestone from `PRISM_SPEC.md`: the runnable foundation now includes model, evidence, tool-registry, memory, tracing, and minimal controller interfaces with a mocked end-to-end path. Real retrieval, concrete tools, task routing, bounded iteration, and full memory behavior remain assigned to later phases.
+Phase 6 provides ZIP and GitHub App repository sources through one shared normalization path. Parsing, chunking, embeddings, retrieval, and the full bounded controller remain assigned to later phases.
 
 ## Local setup
 
@@ -17,6 +17,13 @@ For direct development, install `backend/requirements.txt` and run `uvicorn app.
 
 ## [MANUAL] GitHub App setup
 
-Create a GitHub App with read-only Contents and Metadata permissions. Set its setup callback URL to the backend `/github/callback` endpoint, generate a private key, mount that PEM file only into the backend container, and set `GITHUB_APP_ID` plus `GITHUB_APP_PRIVATE_KEY_PATH` in `.env`. Install the app only on repositories Prism should be allowed to read. Do not place the private key or installation tokens in the frontend, repository, logs, or model context.
+1. Create a GitHub App with read-only Contents and Metadata permissions. Disable webhooks unless a later phase explicitly adds them.
+2. Enable **Request user authorization (OAuth) during installation**. Set the callback URL to the public backend URL ending in `/github/callback`, for example `https://<tunnel-host>/github/callback`.
+3. Generate a client secret and private key. Put the PEM file under `run/secrets/` and configure `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_CLIENT_ID`, and `GITHUB_CLIENT_SECRET` in `.env`.
+4. Start Prism with `docker compose up -d --build`. For localhost.run, keep `ssh -R 80:localhost:8000 nokey@localhost.run` running and confirm `https://<tunnel-host>/health` returns `{"status":"ok"}`.
+5. Log in to Prism, authorize Swagger with the Prism bearer token, call `GET /github/install-url`, and open the returned state-bearing URL in the browser. After installation, GitHub returns through the callback and Prism redirects to the frontend.
+6. Call `GET /github/installations` with the Prism bearer token. Use the returned Prism installation UUID, not GitHub's numeric installation ID, in `GET /github/installations/{installation_id}/repositories`.
+
+Installation state is short-lived, single-use, and bound to the authenticated Prism user who requested the install URL. The callback verifies through a GitHub user access token that the installation is accessible to the GitHub user before persisting it. User and installation tokens are not stored. Do not place the private key, client secret, installation tokens, or user tokens in the frontend, repository, logs, or model context.
 
 Status: Phase 6 complete
