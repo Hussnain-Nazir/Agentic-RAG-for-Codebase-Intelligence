@@ -38,6 +38,7 @@ class RankedChunk:
     raw_signal_scores: dict[str, float] = field(default_factory=dict)
     contributing_signals: tuple[RetrievalSignal, ...] = ()
     contained_symbols: tuple[ContainedSymbol, ...] = ()
+    relationship_metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.final_score is None:

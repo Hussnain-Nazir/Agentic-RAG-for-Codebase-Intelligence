@@ -70,6 +70,7 @@ def normalize_scores(candidates: list[RankedChunk]) -> list[RankedChunk]:
                 raw_signal_scores=dict(candidate.raw_signal_scores),
                 contributing_signals=candidate.contributing_signals,
                 contained_symbols=candidate.contained_symbols,
+                relationship_metadata=dict(candidate.relationship_metadata),
             )
         )
     return normalized
@@ -113,6 +114,7 @@ def merge_candidates(
     raw_scores: dict[uuid.UUID, dict[str, float]] = {}
     contributing: dict[uuid.UUID, set[str]] = {}
     contained_symbols: dict[uuid.UUID, set[ContainedSymbol]] = {}
+    relationships: dict[uuid.UUID, dict[str, object]] = {}
 
     for candidate in [*semantic, *lexical, *symbol]:
         chunk_id = candidate.chunk.id
@@ -123,6 +125,9 @@ def merge_candidates(
         contributing.setdefault(chunk_id, set()).add(candidate.signal)
         contained_symbols.setdefault(chunk_id, set()).update(
             candidate.contained_symbols
+        )
+        relationships.setdefault(chunk_id, {}).update(
+            candidate.relationship_metadata
         )
 
     for candidate in normalized:
@@ -175,6 +180,7 @@ def merge_candidates(
                     if signal in contributing[chunk_id]
                 ),
                 contained_symbols=symbol_metadata,
+                relationship_metadata=relationships[chunk_id],
             )
         )
     return sorted(merged, key=_sort_key)
@@ -258,9 +264,11 @@ def _merged_chunk(group: list[RankedChunk]) -> RankedChunk:
     merged_raw_scores: dict[str, float] = {}
     merged_signals: set[str] = set()
     merged_symbols: set[ContainedSymbol] = set()
+    merged_relationships: dict[str, object] = {}
     for item in group:
         merged_signals.update(item.contributing_signals)
         merged_symbols.update(item.contained_symbols)
+        merged_relationships.update(item.relationship_metadata)
         for signal, score in item.raw_signal_scores.items():
             merged_raw_scores[signal] = max(
                 score,
@@ -290,6 +298,7 @@ def _merged_chunk(group: list[RankedChunk]) -> RankedChunk:
                 ),
             )
         ),
+        relationship_metadata=merged_relationships,
     )
 
 

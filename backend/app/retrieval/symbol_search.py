@@ -259,6 +259,7 @@ async def symbol_search(
                     ),
                 )
             ),
+            relationship_metadata=dict(ranked.relationship_metadata),
         )
     return sorted(
         best_by_chunk.values(),

@@ -178,6 +178,10 @@ async def expand_structurally(
                     raw_signal_scores={},
                     contributing_signals=("structural",),
                     contained_symbols=(),
+                    relationship_metadata={
+                        "related_to_chunk_id": str(seed.chunk.id),
+                        "kind": "structural_neighbor",
+                    },
                 )
             )
             existing_ids.add(chunk.id)

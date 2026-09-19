@@ -812,3 +812,34 @@
 **Resulting module/commit:** `backend/app/retrieval/ranking.py`, `backend/app/retrieval/expansion.py`, `backend/app/retrieval/hybrid.py`, `backend/app/retrieval/models.py`, `backend/app/retrieval/__init__.py`, and `backend/tests/test_hybrid_retrieval.py`.
 
 **Test result:** All 70 backend tests passed, including seven Phase 11 tests for frozen weights, exact-symbol boosting, duplicate and overlap collapse, adjacent merging, bounded structural expansion, and deterministic pipeline ordering. The frontend Vitest suite passed one test. No LLM module is imported or invoked by the Phase 11 retrieval path.
+
+### 2026-09-19 - Phase 12 evidence and context building
+
+**Prompt:**
+
+> Read PRISM_SPEC.md sections 15 (Retrieval & Context Building) and 22.1
+> (Evidence schema) in full before starting. Inspect
+> backend/app/retrieval/hybrid.py from Phase 11,
+> backend/app/evidence/models.py from Phase 4, and
+> backend/app/memory/base.py from Phase 4.
+>
+> Implement real Evidence construction from RankedChunk fields, a
+> provider-independent EvidenceContext and ContextBuilder, repository-memory
+> keyword filtering, repository/structural/web evidence merging, Phase 11
+> deduplication and neighboring-chunk handling, relationship provenance,
+> whole-chunk trimming to the approximate 6,000-token limit, and evidence
+> quality classification as STRONG, INCOMPLETE, CONFLICTING, or NONE.
+> Add tests for strong, empty, conflicting, and oversized contexts. Web
+> provider integration, the agent controller, and structured response schemas
+> remain out of scope. Append the development log and update README to Phase
+> 12 only after all tests pass.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added deterministic Evidence construction, provider-independent EvidenceContext models, ContextBuilder merging and memory filtering, whole-item context-budget enforcement, optional web-evidence conversion, relationship metadata preservation, and evidence-quality classification.
+
+**Modified/rejected:** Kept web provider calls, agent orchestration, model-provider references, weak-evidence routing decisions, and structured response generation out of scope. Context trimming keeps complete excerpts and drops lower-ranked items rather than truncating a retained item.
+
+**Resulting module/commit:** `backend/app/evidence/`, `backend/app/retrieval/models.py`, `backend/app/retrieval/ranking.py`, `backend/app/retrieval/expansion.py`, `backend/app/retrieval/symbol_search.py`, and `backend/tests/test_context_builder.py`.
+
+**Test result:** All 85 backend tests passed, including five Phase 12 context-builder tests. The frontend Vitest suite passed one test. EvidenceContext contains no model/provider-specific fields or imports.
