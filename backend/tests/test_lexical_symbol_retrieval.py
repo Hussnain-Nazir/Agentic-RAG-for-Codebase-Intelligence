@@ -243,6 +243,11 @@ async def test_symbol_search_finds_exact_name(session_factory) -> None:
         assert [result.chunk.id for result in results] == [chunk.id]
         assert results[0].raw_score == 1.0
         assert results[0].signal == "symbol"
+        assert results[0].contained_symbols[0].name == "create_access_token"
+        assert (
+            results[0].contained_symbols[0].match_type
+            == "exact_case_sensitive"
+        )
 
 
 @pytest.mark.asyncio

@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Iterable
 
 from app.models.code_chunk import CodeChunk
-from app.retrieval.models import RankedChunk
+from app.retrieval.models import ContainedSymbol, RankedChunk
 
 SIGNAL_WEIGHTS = {
     "semantic": 0.5,
@@ -69,19 +69,33 @@ def normalize_scores(candidates: list[RankedChunk]) -> list[RankedChunk]:
                 final_score=score,
                 raw_signal_scores=dict(candidate.raw_signal_scores),
                 contributing_signals=candidate.contributing_signals,
+                contained_symbols=candidate.contained_symbols,
             )
         )
     return normalized
 
 
-def _has_exact_symbol_token(chunk: CodeChunk, query_text: str) -> bool:
-    if not chunk.symbol_name:
-        return False
+def _query_has_symbol(query_text: str, symbol_name: str) -> bool:
     tokens = QUERY_TOKEN_PATTERN.findall(query_text)
-    if chunk.symbol_name in tokens:
+    if symbol_name in tokens:
         return True
-    lowered = chunk.symbol_name.lower()
+    lowered = symbol_name.lower()
     return any(token.lower() == lowered for token in tokens)
+
+
+def _has_exact_symbol_match(candidate: RankedChunk, query_text: str) -> bool:
+    if candidate.chunk.symbol_name and _query_has_symbol(
+        query_text, candidate.chunk.symbol_name
+    ):
+        return True
+    return any(
+        symbol.match_type in {
+            "exact_case_sensitive",
+            "exact_case_insensitive",
+        }
+        and _query_has_symbol(query_text, symbol.name)
+        for symbol in candidate.contained_symbols
+    )
 
 
 def merge_candidates(
@@ -98,6 +112,7 @@ def merge_candidates(
     source_ids: dict[uuid.UUID, set[uuid.UUID]] = {}
     raw_scores: dict[uuid.UUID, dict[str, float]] = {}
     contributing: dict[uuid.UUID, set[str]] = {}
+    contained_symbols: dict[uuid.UUID, set[ContainedSymbol]] = {}
 
     for candidate in [*semantic, *lexical, *symbol]:
         chunk_id = candidate.chunk.id
@@ -106,6 +121,9 @@ def merge_candidates(
             raw_scores.get(chunk_id, {}).get(candidate.signal, float("-inf")),
         )
         contributing.setdefault(chunk_id, set()).add(candidate.signal)
+        contained_symbols.setdefault(chunk_id, set()).update(
+            candidate.contained_symbols
+        )
 
     for candidate in normalized:
         chunk_id = candidate.chunk.id
@@ -123,7 +141,25 @@ def merge_candidates(
         score = scores.get(chunk_id, 0.0)
         if chunk_id in symbol_chunks:
             score += SYMBOL_PRESENCE_WEIGHT
-        if _has_exact_symbol_token(chunk, query_text):
+        symbol_metadata = tuple(
+            sorted(
+                contained_symbols[chunk_id],
+                key=lambda item: (
+                    item.file_path,
+                    item.start_line,
+                    item.end_line,
+                    item.name,
+                    item.match_type,
+                ),
+            )
+        )
+        boost_candidate = RankedChunk(
+            chunk=chunk,
+            raw_score=score,
+            signal="hybrid",
+            contained_symbols=symbol_metadata,
+        )
+        if _has_exact_symbol_match(boost_candidate, query_text):
             score += EXACT_SYMBOL_BOOST
         merged.append(
             RankedChunk(
@@ -138,6 +174,7 @@ def merge_candidates(
                     for signal in ("semantic", "lexical", "symbol")
                     if signal in contributing[chunk_id]
                 ),
+                contained_symbols=symbol_metadata,
             )
         )
     return sorted(merged, key=_sort_key)
@@ -220,8 +257,10 @@ def _merged_chunk(group: list[RankedChunk]) -> RankedChunk:
     )
     merged_raw_scores: dict[str, float] = {}
     merged_signals: set[str] = set()
+    merged_symbols: set[ContainedSymbol] = set()
     for item in group:
         merged_signals.update(item.contributing_signals)
+        merged_symbols.update(item.contained_symbols)
         for signal, score in item.raw_signal_scores.items():
             merged_raw_scores[signal] = max(
                 score,
@@ -238,6 +277,18 @@ def _merged_chunk(group: list[RankedChunk]) -> RankedChunk:
             signal
             for signal in ("semantic", "lexical", "symbol", "hybrid", "structural")
             if signal in merged_signals
+        ),
+        contained_symbols=tuple(
+            sorted(
+                merged_symbols,
+                key=lambda item: (
+                    item.file_path,
+                    item.start_line,
+                    item.end_line,
+                    item.name,
+                    item.match_type,
+                ),
+            )
         ),
     )
 

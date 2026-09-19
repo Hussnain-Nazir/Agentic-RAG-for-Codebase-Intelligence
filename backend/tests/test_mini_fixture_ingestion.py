@@ -17,6 +17,7 @@ from app.models import (
     RepositoryIndexState,
     User,
 )
+from app.retrieval.hybrid import HybridRetriever
 from app.sources.upload import UploadedRepositorySource
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "mini_fastapi"
@@ -96,6 +97,26 @@ async def test_mini_fixture_real_ingestion_populates_structure_and_embeddings() 
                 ("list_items", "get_current_user"),
                 ("list_items", "create_session"),
                 ("create_item", "get_current_user"),
+            }
+            retriever = HybridRetriever(
+                session=session,
+                embedding_provider=FakeEmbeddingProvider(),
+            )
+            results = await retriever.retrieve(
+                uuid.UUID(response.repository_id),
+                uuid.UUID(response.index_id),
+                "create_access_token",
+            )
+            assert results[0].chunk.file_path == "auth/security.py"
+            assert any(
+                symbol.name == "create_access_token"
+                and symbol.match_type == "exact_case_sensitive"
+                for symbol in results[0].contained_symbols
+            )
+            assert {symbol.name for symbol in results[0].contained_symbols} >= {
+                "create_access_token",
+                "verify_password",
+                "get_current_user",
             }
     finally:
         await engine.dispose()

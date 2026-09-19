@@ -24,7 +24,7 @@ from app.models import (
 )
 from app.retrieval.expansion import expand_structurally
 from app.retrieval.hybrid import HybridRetriever
-from app.retrieval.models import RankedChunk
+from app.retrieval.models import ContainedSymbol, RankedChunk
 from app.retrieval.ranking import (
     deduplicate_by_chunk_and_overlap,
     merge_adjacent_chunks,
@@ -189,6 +189,146 @@ def test_exact_symbol_boost_outranks_stronger_semantic_candidate() -> None:
 
     assert merged[0].chunk.id == exact.id
     assert merged[0].raw_score > merged[1].raw_score
+
+
+def test_contained_exact_symbol_boosts_chunk_without_symbol_name() -> None:
+    chunk = transient_chunk(
+        file_path="auth/security.py",
+        start_line=4,
+        end_line=18,
+        symbol_name="placeholder",
+    )
+    chunk.symbol_name = None
+    symbol_match = RankedChunk(
+        chunk,
+        1.0,
+        "symbol",
+        contained_symbols=(
+            ContainedSymbol(
+                name="create_access_token",
+                file_path=chunk.file_path,
+                start_line=6,
+                end_line=8,
+                match_type="exact_case_sensitive",
+            ),
+        ),
+    )
+
+    merged = merge_candidates([], [], [symbol_match], "create_access_token")
+
+    assert len(merged) == 1
+    assert merged[0].raw_score == pytest.approx(0.7)
+    assert merged[0].contained_symbols == symbol_match.contained_symbols
+
+
+def test_adjacent_evidence_unit_receives_exact_boost_once() -> None:
+    exact = transient_chunk(
+        file_path="auth/security.py",
+        start_line=4,
+        end_line=8,
+        symbol_name="placeholder",
+    )
+    exact.symbol_name = None
+    adjacent = transient_chunk(
+        file_path="auth/security.py",
+        start_line=10,
+        end_line=13,
+        symbol_name="verify_password",
+    )
+    exact_ranked = merge_candidates(
+        [],
+        [],
+        [
+            RankedChunk(
+                exact,
+                1.0,
+                "symbol",
+                contained_symbols=(
+                    ContainedSymbol(
+                        name="create_access_token",
+                        file_path=exact.file_path,
+                        start_line=5,
+                        end_line=7,
+                        match_type="exact_case_sensitive",
+                    ),
+                ),
+            )
+        ],
+        "create_access_token",
+    )[0]
+
+    merged = merge_adjacent_chunks(
+        [exact_ranked, RankedChunk(adjacent, 0.6, "hybrid")]
+    )
+
+    assert len(merged) == 1
+    assert merged[0].raw_score == pytest.approx(0.7)
+    assert [item.name for item in merged[0].contained_symbols] == [
+        "create_access_token"
+    ]
+
+
+def test_case_insensitive_exact_boosts_but_fuzzy_only_does_not() -> None:
+    exact = transient_chunk(
+        file_path="exact.py",
+        start_line=1,
+        end_line=3,
+        symbol_name="placeholder",
+    )
+    exact.symbol_name = None
+    fuzzy = transient_chunk(
+        file_path="fuzzy.py",
+        start_line=1,
+        end_line=3,
+        symbol_name="placeholder",
+    )
+    fuzzy.symbol_name = None
+
+    exact_result = merge_candidates(
+        [],
+        [],
+        [
+            RankedChunk(
+                exact,
+                0.95,
+                "symbol",
+                contained_symbols=(
+                    ContainedSymbol(
+                        "CreateAccessToken",
+                        exact.file_path,
+                        1,
+                        3,
+                        "exact_case_insensitive",
+                    ),
+                ),
+            )
+        ],
+        "createaccesstoken",
+    )[0]
+    fuzzy_result = merge_candidates(
+        [],
+        [],
+        [
+            RankedChunk(
+                fuzzy,
+                0.8,
+                "symbol",
+                contained_symbols=(
+                    ContainedSymbol(
+                        "create_access_token",
+                        fuzzy.file_path,
+                        1,
+                        3,
+                        "fuzzy",
+                    ),
+                ),
+            )
+        ],
+        "create_access_tken",
+    )[0]
+
+    assert exact_result.raw_score == pytest.approx(0.7)
+    assert fuzzy_result.raw_score == pytest.approx(0.2)
 
 
 def test_merge_uses_frozen_signal_weights() -> None:

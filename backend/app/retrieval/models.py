@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
-from typing import Literal
 import uuid
+from typing import Literal
 
 from app.models.code_chunk import CodeChunk
 
@@ -11,6 +11,21 @@ RetrievalSignal = Literal[
     "hybrid",
     "structural",
 ]
+SymbolMatchType = Literal[
+    "exact_case_sensitive",
+    "exact_case_insensitive",
+    "fuzzy",
+    "contained",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class ContainedSymbol:
+    name: str
+    file_path: str
+    start_line: int
+    end_line: int
+    match_type: SymbolMatchType
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +37,7 @@ class RankedChunk:
     final_score: float | None = None
     raw_signal_scores: dict[str, float] = field(default_factory=dict)
     contributing_signals: tuple[RetrievalSignal, ...] = ()
+    contained_symbols: tuple[ContainedSymbol, ...] = ()
 
     def __post_init__(self) -> None:
         if self.final_score is None:
