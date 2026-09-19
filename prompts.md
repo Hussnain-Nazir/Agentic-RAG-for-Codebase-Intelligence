@@ -734,3 +734,41 @@
 **Resulting module/commit:** `backend/app/embeddings/`, `backend/app/ingestion/embedding_stage.py`, `backend/app/retrieval/vector_search.py`, `backend/app/models/code_chunk.py`, `backend/alembic/versions/0008_add_embedding_indexes.py`, `backend/requirements.txt`, and `backend/tests/test_embeddings.py`.
 
 **Test result:** All 58 backend tests passed in Docker. The frontend Vitest suite and production build passed. Alembic upgraded the existing PostgreSQL database from revision 0007 to 0008, and a separate empty verification database successfully applied the full migration chain through 0008. PostgreSQL confirmed the nullable embedding model version column, the composite repository/version B-tree index, and the ivfflat cosine index with `lists=100`.
+
+### 2026-09-19 - Phase 10 lexical and symbol retrieval
+
+**Prompt:**
+
+> Read PRISM_SPEC.md sections 14 (Hybrid RAG Architecture) and 6.1 (lexical
+> retrieval decision: PostgreSQL full-text search) before starting. Inspect
+> backend/app/retrieval/vector_search.py from Phase 9 to match its return
+> shape.
+>
+> This is Phase 10 of Prism. Implement:
+>
+> 1. Alembic migration adding a generated tsvector column (or a functional
+>    GIN index directly on to_tsvector('english', content)) on code_chunks,
+>    plus a GIN trigram index on code_symbols.name (enable pg_trgm extension
+>    if not already enabled).
+> 2. backend/app/retrieval/lexical_search.py using ts_rank_cd, scoped by
+>    repository_id and repository_index_id.
+> 3. backend/app/retrieval/symbol_search.py returning exact and top-10
+>    trigram matches mapped to owning chunks.
+> 4. A shared RankedChunk data class used by semantic, lexical, and symbol
+>    retrieval.
+> 5. Tests for lexical ranking, exact and fuzzy symbol matching, and
+>    repository isolation.
+>
+> Merging signals, structural expansion, and ContextBuilder are out of scope.
+> Append a prompts.md entry and update README.md to Phase 10 only after all
+> tests pass.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added a shared `RankedChunk` result type, updated semantic retrieval to use it, added PostgreSQL full-text lexical retrieval, added exact and trigram symbol retrieval mapped to owning chunks, and added the required generated search vector and GIN indexes.
+
+**Modified/rejected:** Kept hybrid merging, cross-signal normalization, exact-symbol boosting, structural expansion, and context construction out of scope. SQLite uses deterministic local scoring only for isolated automated tests; PostgreSQL production paths use `ts_rank_cd`, the generated `tsvector`, and `pg_trgm` candidate ranking.
+
+**Resulting module/commit:** `backend/app/retrieval/`, `backend/app/models/code_symbol.py`, `backend/alembic/versions/0009_add_lexical_and_symbol_indexes.py`, `backend/tests/test_embeddings.py`, and `backend/tests/test_lexical_symbol_retrieval.py`.
+
+**Test result:** All 63 backend tests passed, including five new lexical/symbol retrieval tests and the updated semantic retrieval tests. The frontend Vitest suite passed one test. Alembic upgraded PostgreSQL to revision 0009; PostgreSQL confirmed the generated `search_vector` column, `pg_trgm`, and both required GIN indexes.

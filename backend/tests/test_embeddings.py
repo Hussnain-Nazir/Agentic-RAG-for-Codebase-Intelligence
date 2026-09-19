@@ -29,6 +29,7 @@ from app.models import (
     User,
 )
 from app.retrieval.vector_search import semantic_search
+from app.retrieval.models import RankedChunk
 
 
 def vector(first: float, second: float = 0.0) -> list[float]:
@@ -202,7 +203,12 @@ async def test_semantic_search_returns_most_similar_scoped_chunk(session_factory
             session=session,
         )
 
-        assert [chunk.content for chunk in results] == ["auth handler", "database setup"]
+        assert all(isinstance(result, RankedChunk) for result in results)
+        assert [result.chunk.content for result in results] == [
+            "auth handler",
+            "database setup",
+        ]
+        assert all(result.signal == "semantic" for result in results)
 
 
 @pytest.mark.asyncio
@@ -231,8 +237,8 @@ async def test_semantic_search_never_crosses_repository_boundary(session_factory
             session=session,
         )
 
-        assert [chunk.id for chunk in results] == [allowed.id]
-        assert all(chunk.repository_id == first_repo.id for chunk in results)
+        assert [result.chunk.id for result in results] == [allowed.id]
+        assert all(result.chunk.repository_id == first_repo.id for result in results)
 
 
 @pytest.mark.asyncio
@@ -254,7 +260,7 @@ async def test_semantic_search_excludes_stale_embedding_model_vectors(session_fa
             repository.id, index.id, vector(1.0), 10, session=session
         )
 
-        assert [item.id for item in results] == [current.id]
+        assert [item.chunk.id for item in results] == [current.id]
 
 
 @pytest.mark.asyncio
@@ -311,7 +317,7 @@ async def test_postgres_pgvector_search_orders_and_limits_scoped_results() -> No
             results = await semantic_search(
                 repository.id, index.id, vector(1.0), 1, session=session
             )
-            assert [item.id for item in results] == [expected.id]
+            assert [item.chunk.id for item in results] == [expected.id]
     finally:
         if engine is not None:
             await engine.dispose()

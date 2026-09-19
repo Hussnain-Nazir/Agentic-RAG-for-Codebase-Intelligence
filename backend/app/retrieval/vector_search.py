@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings
 from app.ingestion.embedding_stage import current_embedding_model_version
 from app.models.code_chunk import CodeChunk
+from app.retrieval.models import RankedChunk
 
 EMBEDDING_DIMENSIONS = 384
 
@@ -30,11 +31,11 @@ async def semantic_search(
     repository_id: uuid.UUID,
     repository_index_id: uuid.UUID,
     query_embedding: list[float],
-    top_k: int,
+    top_k: int = 30,
     *,
     session: AsyncSession,
     settings: Settings | None = None,
-) -> list[CodeChunk]:
+) -> list[RankedChunk]:
     """Return scoped chunks ordered by cosine distance."""
     if top_k <= 0:
         return []
@@ -55,16 +56,28 @@ async def semantic_search(
     )
     dialect = session.bind.dialect.name if session.bind is not None else ""
     if dialect == "postgresql":
+        distance = CodeChunk.embedding.cosine_distance(query_embedding)
         statement = (
-            scoped.order_by(CodeChunk.embedding.cosine_distance(query_embedding))
+            scoped.add_columns((1.0 - distance).label("raw_score"))
+            .order_by(distance)
             .limit(top_k)
         )
-        return list((await session.scalars(statement)).all())
+        rows = (await session.execute(statement)).all()
+        return [
+            RankedChunk(chunk=chunk, raw_score=float(score), signal="semantic")
+            for chunk, score in rows
+        ]
 
     candidates = list((await session.scalars(scoped)).all())
-    candidates.sort(
-        key=lambda chunk: _cosine_distance(
-            _as_floats(chunk.embedding), query_embedding
+    scored = [
+        (
+            chunk,
+            1.0 - _cosine_distance(_as_floats(chunk.embedding), query_embedding),
         )
-    )
-    return candidates[:top_k]
+        for chunk in candidates
+    ]
+    scored.sort(key=lambda item: item[1], reverse=True)
+    return [
+        RankedChunk(chunk=chunk, raw_score=score, signal="semantic")
+        for chunk, score in scored[:top_k]
+    ]

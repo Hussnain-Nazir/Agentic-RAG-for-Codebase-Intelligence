@@ -16,6 +16,12 @@ class CodeSymbol(Base):
     __tablename__ = "code_symbols"
     __table_args__ = (
         Index("ix_code_symbols_index_name", "repository_index_id", "name"),
+        Index(
+            "ix_code_symbols_name_trgm",
+            "name",
+            postgresql_using="gin",
+            postgresql_ops={"name": "gin_trgm_ops"},
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
