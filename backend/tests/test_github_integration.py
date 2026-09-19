@@ -43,6 +43,13 @@ from app.models import (
 from app.sources.github import GitHubRepositorySource
 
 TEST_SECRET = "phase-six-test-secret-at-least-32-bytes"
+
+
+class FakeEmbeddingProvider:
+    dimensions = 384
+
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        return [[1.0, *([0.0] * 383)] for _ in texts]
 FUTURE_EXPIRY = "2099-01-01T00:00:00Z"
 
 

@@ -174,6 +174,9 @@ async def expand_structurally(
                     raw_score=seed.raw_score,
                     signal="structural",
                     source_chunk_ids=(chunk.id,),
+                    final_score=seed.raw_score,
+                    raw_signal_scores={},
+                    contributing_signals=("structural",),
                 )
             )
             existing_ids.add(chunk.id)

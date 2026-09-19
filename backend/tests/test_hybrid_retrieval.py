@@ -228,6 +228,21 @@ def test_merge_uses_frozen_signal_weights() -> None:
     assert scores[semantic_winner.id] == pytest.approx(0.5)
     assert scores[lexical_winner.id] == pytest.approx(0.3)
     assert scores[symbol_only.id] == pytest.approx(0.2)
+    assert [item.chunk.id for item in merged] == [
+        semantic_winner.id,
+        lexical_winner.id,
+        symbol_only.id,
+    ]
+    by_id = {item.chunk.id: item for item in merged}
+    assert by_id[semantic_winner.id].final_score == pytest.approx(0.5)
+    assert by_id[semantic_winner.id].raw_signal_scores == {
+        "semantic": 2.0,
+        "lexical": 1.0,
+    }
+    assert by_id[semantic_winner.id].contributing_signals == (
+        "semantic",
+        "lexical",
+    )
 
 
 def test_duplicate_chunk_id_collapses_to_max_score() -> None:
@@ -397,3 +412,8 @@ async def test_hybrid_retriever_is_deterministic(session_factory) -> None:
         assert first
         assert [item.chunk.id for item in first] == [item.chunk.id for item in second]
         assert [item.raw_score for item in first] == [item.raw_score for item in second]
+        assert all(item.final_score == item.raw_score for item in first)
+        assert all(item.contributing_signals for item in first)
+        assert all(
+            item.raw_signal_scores or item.signal == "structural" for item in first
+        )

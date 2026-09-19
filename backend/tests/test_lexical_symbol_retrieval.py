@@ -154,6 +154,70 @@ async def test_lexical_search_ranks_exact_phrase_above_unrelated_chunk(
 
 
 @pytest.mark.asyncio
+async def test_lexical_search_falls_back_to_meaningful_or_terms(
+    session_factory,
+) -> None:
+    async with session_factory() as session:
+        repository, repository_index, repository_file = await make_repository(
+            session, "lexical-natural-language@example.com"
+        )
+        target, target_symbol = make_chunk(
+            repository,
+            repository_index,
+            repository_file,
+            '# JWT secret configuration\nJWT_SECRET = os.environ["JWT_SECRET"]',
+            "load_jwt_secret",
+        )
+        session.add_all([target, target_symbol])
+        await session.flush()
+
+        results = await lexical_search(
+            repository.id,
+            repository_index.id,
+            "Where is the JWT secret loaded during application startup?",
+            session=session,
+        )
+
+        assert results
+        assert results[0].chunk.id == target.id
+
+
+@pytest.mark.asyncio
+async def test_lexical_search_keeps_strict_path_when_it_has_results(
+    session_factory,
+) -> None:
+    async with session_factory() as session:
+        repository, repository_index, repository_file = await make_repository(
+            session, "lexical-strict@example.com"
+        )
+        strict, strict_symbol = make_chunk(
+            repository,
+            repository_index,
+            repository_file,
+            "access token authentication",
+            "strict_match",
+        )
+        partial, partial_symbol = make_chunk(
+            repository,
+            repository_index,
+            repository_file,
+            "access access access",
+            "partial_match",
+        )
+        session.add_all([strict, strict_symbol, partial, partial_symbol])
+        await session.flush()
+
+        results = await lexical_search(
+            repository.id,
+            repository_index.id,
+            "access token",
+            session=session,
+        )
+
+        assert [result.chunk.id for result in results] == [strict.id]
+
+
+@pytest.mark.asyncio
 async def test_symbol_search_finds_exact_name(session_factory) -> None:
     async with session_factory() as session:
         repository, repository_index, repository_file = await make_repository(
@@ -228,6 +292,61 @@ async def test_symbol_search_ignores_unrelated_fuzzy_name(session_factory) -> No
 
 
 @pytest.mark.asyncio
+async def test_symbol_search_short_misspelling_clears_fuzzy_threshold(
+    session_factory,
+) -> None:
+    async with session_factory() as session:
+        repository, repository_index, repository_file = await make_repository(
+            session, "symbol-short-fuzzy@example.com"
+        )
+        chunk, symbol = make_chunk(
+            repository,
+            repository_index,
+            repository_file,
+            "def hello(): pass",
+            "hello",
+        )
+        session.add_all([chunk, symbol])
+        await session.flush()
+
+        results = await symbol_search(
+            repository.id,
+            repository_index.id,
+            "helo",
+            session=session,
+        )
+
+        assert [result.chunk.id for result in results] == [chunk.id]
+
+
+@pytest.mark.asyncio
+async def test_symbol_search_excludes_unrelated_zero_similarity_matches(
+    session_factory,
+) -> None:
+    async with session_factory() as session:
+        repository, repository_index, repository_file = await make_repository(
+            session, "symbol-unrelated@example.com"
+        )
+        chunk, symbol = make_chunk(
+            repository,
+            repository_index,
+            repository_file,
+            "def hello(): pass",
+            "hello",
+        )
+        session.add_all([chunk, symbol])
+        await session.flush()
+
+        results = await symbol_search(
+            repository.id,
+            repository_index.id,
+            "database_connection",
+            session=session,
+        )
+        assert results == []
+
+
+@pytest.mark.asyncio
 async def test_postgres_symbol_search_excludes_unrelated_fuzzy_names() -> None:
     database_url = os.getenv("PRISM_TEST_POSTGRES_URL")
     if not database_url:
@@ -297,7 +416,10 @@ async def test_lexical_search_enforces_repository_and_index_isolation(
         await session.flush()
 
         results = await lexical_search(
-            allowed_repo.id, allowed_index.id, "access token", session=session
+            allowed_repo.id,
+            allowed_index.id,
+            "Where is the access token loaded during startup?",
+            session=session,
         )
 
         assert [result.chunk.id for result in results] == [allowed.id]

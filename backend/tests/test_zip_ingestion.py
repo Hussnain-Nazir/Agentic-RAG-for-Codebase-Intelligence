@@ -21,7 +21,14 @@ from app.ingestion.pipeline import MVP_INDEXABLE_FILE_TARGET, SNIFF_BYTES, disco
 from app.ingestion.security import ZipSafetyError, safe_extract
 from app.sources.base import SourceFileRef
 from app.main import create_app
-from app.models import CodeChunk, RepositoryFile, RepositoryFileStatus, RepositoryIndex, User
+from app.models import (
+    CodeChunk,
+    RepositoryFile,
+    RepositoryFileStatus,
+    RepositoryIndex,
+    RepositoryIndexState,
+    User,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 TEST_SECRET = "phase-five-test-secret-at-least-32-bytes"
@@ -32,12 +39,14 @@ class FakeEmbeddingProvider:
 
     def __init__(self) -> None:
         self.call_count = 0
+        self.embedded_texts: list[str] = []
         self.error: Exception | None = None
 
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
         if self.error is not None:
             raise self.error
         self.call_count += 1
+        self.embedded_texts.extend(texts)
         return [[1.0, *([0.0] * 383)] for _ in texts]
 
 
@@ -51,7 +60,7 @@ def zip_entries(entries: dict[str, bytes]) -> bytes:
 
 @pytest.fixture
 def ingestion_context() -> Iterator[
-    tuple[TestClient, async_sessionmaker[AsyncSession], uuid.UUID]
+    tuple[TestClient, async_sessionmaker[AsyncSession], uuid.UUID, FakeEmbeddingProvider]
 ]:
     database_url = "sqlite+aiosqlite://"
     engine = create_async_engine(
@@ -94,7 +103,7 @@ def ingestion_context() -> Iterator[
     app.dependency_overrides[get_settings] = override_get_settings
     app.dependency_overrides[get_embedding_provider] = lambda: embedding_provider
     with TestClient(app) as client:
-        yield client, session_factory, user_id
+        yield client, session_factory, user_id, embedding_provider
     asyncio.run(engine.dispose())
 
 
@@ -179,10 +188,15 @@ def test_zip_reader_errors_use_safe_rejection_path(
 
 
 def test_oversized_zip_returns_413_before_extraction(
-    ingestion_context: tuple[TestClient, async_sessionmaker[AsyncSession], uuid.UUID],
+    ingestion_context: tuple[
+        TestClient,
+        async_sessionmaker[AsyncSession],
+        uuid.UUID,
+        FakeEmbeddingProvider,
+    ],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client, _, user_id = ingestion_context
+    client, _, user_id, _ = ingestion_context
     extraction_attempted = False
 
     def fail_if_called(*args: object, **kwargs: object) -> None:
@@ -204,9 +218,14 @@ def test_oversized_zip_returns_413_before_extraction(
 
 
 def test_ignored_secret_and_binary_files_are_handled(
-    ingestion_context: tuple[TestClient, async_sessionmaker[AsyncSession], uuid.UUID],
+    ingestion_context: tuple[
+        TestClient,
+        async_sessionmaker[AsyncSession],
+        uuid.UUID,
+        FakeEmbeddingProvider,
+    ],
 ) -> None:
-    client, session_factory, user_id = ingestion_context
+    client, session_factory, user_id, _ = ingestion_context
     response = client.post(
         "/repositories",
         headers=auth_headers(user_id),
@@ -235,9 +254,14 @@ def test_ignored_secret_and_binary_files_are_handled(
 
 
 def test_clean_fixture_normalizes_expected_repository_files(
-    ingestion_context: tuple[TestClient, async_sessionmaker[AsyncSession], uuid.UUID],
+    ingestion_context: tuple[
+        TestClient,
+        async_sessionmaker[AsyncSession],
+        uuid.UUID,
+        FakeEmbeddingProvider,
+    ],
 ) -> None:
-    client, session_factory, user_id = ingestion_context
+    client, session_factory, user_id, embedding_provider = ingestion_context
     response = client.post(
         "/repositories",
         headers=auth_headers(user_id),
@@ -267,16 +291,17 @@ def test_clean_fixture_normalizes_expected_repository_files(
             assert index is not None
             assert index.size_warning is False
             chunks = list(await session.scalars(select(CodeChunk)))
-            assert chunks and all(chunk.embedding is not None for chunk in chunks)
+            assert chunks
+            assert all(chunk.embedding is not None for chunk in chunks)
+            assert all(chunk.embedding_model_version for chunk in chunks)
 
-    assert client.app.dependency_overrides[get_embedding_provider]().call_count >= 1
+    assert embedding_provider.call_count == 1
 
     asyncio.run(inspect())
 
 
 def test_embedding_failure_does_not_mark_repository_ready(ingestion_context) -> None:
-    client, session_factory, user_id = ingestion_context
-    provider = client.app.dependency_overrides[get_embedding_provider]()
+    client, session_factory, user_id, provider = ingestion_context
     provider.error = RuntimeError("synthetic embedding failure")
     response = client.post(
         "/repositories",
@@ -301,9 +326,14 @@ def test_embedding_failure_does_not_mark_repository_ready(ingestion_context) -> 
 
 
 def test_repository_over_mvp_target_is_ready_with_size_warning(
-    ingestion_context: tuple[TestClient, async_sessionmaker[AsyncSession], uuid.UUID],
+    ingestion_context: tuple[
+        TestClient,
+        async_sessionmaker[AsyncSession],
+        uuid.UUID,
+        FakeEmbeddingProvider,
+    ],
 ) -> None:
-    client, session_factory, user_id = ingestion_context
+    client, session_factory, user_id, _ = ingestion_context
     entries = {
         f"src/file_{number:04}.py": b"value = 1\n"
         for number in range(MVP_INDEXABLE_FILE_TARGET + 1)
@@ -325,5 +355,70 @@ def test_repository_over_mvp_target_is_ready_with_size_warning(
             assert index.state.value == "READY"
             assert index.size_warning is True
             assert index.files_processed == MVP_INDEXABLE_FILE_TARGET + 1
+
+    asyncio.run(inspect())
+
+
+def test_unchanged_reimport_reuses_embeddings_without_new_computation(
+    ingestion_context: tuple[
+        TestClient,
+        async_sessionmaker[AsyncSession],
+        uuid.UUID,
+        FakeEmbeddingProvider,
+    ],
+) -> None:
+    client, _, user_id, provider = ingestion_context
+    payload = (FIXTURES / "clean_repo.zip").read_bytes()
+
+    first = client.post(
+        "/repositories",
+        headers=auth_headers(user_id),
+        files={"upload": ("clean.zip", payload, "application/zip")},
+    )
+    calls_after_first = provider.call_count
+    second = client.post(
+        "/repositories",
+        headers=auth_headers(user_id),
+        files={"upload": ("clean.zip", payload, "application/zip")},
+    )
+
+    assert first.status_code == second.status_code == 201
+    assert calls_after_first == 1
+    assert provider.call_count == calls_after_first
+
+
+def test_embedding_failure_marks_index_failed(
+    ingestion_context: tuple[
+        TestClient,
+        async_sessionmaker[AsyncSession],
+        uuid.UUID,
+        FakeEmbeddingProvider,
+    ],
+) -> None:
+    client, session_factory, user_id, provider = ingestion_context
+    provider.error = RuntimeError("synthetic embedding failure")
+
+    response = client.post(
+        "/repositories",
+        headers=auth_headers(user_id),
+        files={
+            "upload": (
+                "clean.zip",
+                (FIXTURES / "clean_repo.zip").read_bytes(),
+                "application/zip",
+            )
+        },
+    )
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Repository embedding failed"
+
+    async def inspect() -> None:
+        async with session_factory() as session:
+            index = await session.scalar(select(RepositoryIndex))
+            assert index is not None
+            assert index.state is RepositoryIndexState.FAILED
+            assert index.failure_reason is not None
+            assert "synthetic embedding failure" in index.failure_reason
 
     asyncio.run(inspect())

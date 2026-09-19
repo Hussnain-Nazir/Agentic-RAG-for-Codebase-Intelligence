@@ -66,6 +66,9 @@ def normalize_scores(candidates: list[RankedChunk]) -> list[RankedChunk]:
                 raw_score=score,
                 signal=candidate.signal,
                 source_chunk_ids=_source_ids(candidate),
+                final_score=score,
+                raw_signal_scores=dict(candidate.raw_signal_scores),
+                contributing_signals=candidate.contributing_signals,
             )
         )
     return normalized
@@ -93,6 +96,16 @@ def merge_candidates(
     scores: dict[uuid.UUID, float] = {}
     symbol_chunks: set[uuid.UUID] = set()
     source_ids: dict[uuid.UUID, set[uuid.UUID]] = {}
+    raw_scores: dict[uuid.UUID, dict[str, float]] = {}
+    contributing: dict[uuid.UUID, set[str]] = {}
+
+    for candidate in [*semantic, *lexical, *symbol]:
+        chunk_id = candidate.chunk.id
+        raw_scores.setdefault(chunk_id, {})[candidate.signal] = max(
+            candidate.raw_score,
+            raw_scores.get(chunk_id, {}).get(candidate.signal, float("-inf")),
+        )
+        contributing.setdefault(chunk_id, set()).add(candidate.signal)
 
     for candidate in normalized:
         chunk_id = candidate.chunk.id
@@ -118,6 +131,13 @@ def merge_candidates(
                 raw_score=score,
                 signal="hybrid",
                 source_chunk_ids=tuple(sorted(source_ids[chunk_id], key=str)),
+                final_score=score,
+                raw_signal_scores=raw_scores[chunk_id],
+                contributing_signals=tuple(
+                    signal
+                    for signal in ("semantic", "lexical", "symbol")
+                    if signal in contributing[chunk_id]
+                ),
             )
         )
     return sorted(merged, key=_sort_key)
@@ -198,11 +218,27 @@ def _merged_chunk(group: list[RankedChunk]) -> RankedChunk:
             "source_chunk_ids": [str(item) for item in source_ids],
         },
     )
+    merged_raw_scores: dict[str, float] = {}
+    merged_signals: set[str] = set()
+    for item in group:
+        merged_signals.update(item.contributing_signals)
+        for signal, score in item.raw_signal_scores.items():
+            merged_raw_scores[signal] = max(
+                score,
+                merged_raw_scores.get(signal, float("-inf")),
+            )
     return RankedChunk(
         chunk=chunk,
         raw_score=max(item.raw_score for item in group),
         signal=best.signal,
         source_chunk_ids=tuple(source_ids),
+        final_score=max(item.raw_score for item in group),
+        raw_signal_scores=merged_raw_scores,
+        contributing_signals=tuple(
+            signal
+            for signal in ("semantic", "lexical", "symbol", "hybrid", "structural")
+            if signal in merged_signals
+        ),
     )
 
 

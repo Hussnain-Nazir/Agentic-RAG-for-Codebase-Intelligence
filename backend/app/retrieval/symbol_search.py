@@ -10,6 +10,8 @@ from app.models.repository_index import RepositoryIndex
 from app.retrieval.models import RankedChunk
 
 FUZZY_SYMBOL_LIMIT = 10
+# PostgreSQL pg_trgm uses 0.3 as its default similarity threshold. Exact
+# matches remain unconditional; fuzzy candidates must be strictly above it.
 FUZZY_SIMILARITY_THRESHOLD = 0.3
 
 
