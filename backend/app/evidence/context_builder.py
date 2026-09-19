@@ -215,6 +215,16 @@ class ContextBuilder:
         repository_index_id = (
             ranked[0].chunk.repository_index_id if ranked else None
         )
+        file_line_counts: dict[str, int] = {}
+        for candidate in ranked:
+            stored_line_count = candidate.chunk.chunk_metadata.get(
+                "file_line_count",
+                candidate.chunk.end_line,
+            )
+            file_line_counts[candidate.chunk.file_path] = max(
+                int(stored_line_count),
+                file_line_counts.get(candidate.chunk.file_path, 0),
+            )
         combined = _dedupe_evidence(
             [
                 *build_evidence(ranked),
@@ -248,6 +258,9 @@ class ContextBuilder:
         quality = classify_evidence_quality(kept)
         return EvidenceContext(
             context_id=uuid.uuid5(uuid.NAMESPACE_URL, context_seed),
+            repository_id=repository_id,
+            repository_index_id=repository_index_id,
+            file_line_counts=file_line_counts,
             task=task_model,
             task_type=task_type_value,
             repository_memory=kept_memory,

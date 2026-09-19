@@ -60,6 +60,9 @@ class WebEvidenceItem(BaseModel):
 
 class EvidenceContext(BaseModel):
     context_id: uuid.UUID
+    repository_id: uuid.UUID | None = None
+    repository_index_id: uuid.UUID | None = None
+    file_line_counts: dict[str, int] = Field(default_factory=dict)
     task: ContextTask
     task_type: str
     repository_memory: list[RepositoryMemoryContextItem]

@@ -928,3 +928,31 @@
 **Resulting module/commit:** `backend/app/tools/errors.py`, `backend/app/tools/repository_context.py`, `backend/app/tools/schemas.py`, `backend/app/tools/repository_tools.py`, `backend/app/tools/registry.py`, plugin error integration, and `backend/tests/test_tool_registry.py`.
 
 **Test result:** All 111 backend tests passed, including seven Phase 15 registry/tool integration tests. The frontend Vitest suite passed one test. ToolRegistry returned exactly the eleven specification names in the frozen order.
+
+### 2026-09-20 - Phase 16 structured outputs and grounding validation
+
+**Prompt:**
+
+> Read PRISM_SPEC.md section 22 (Structured Outputs, Evidence & Grounding) in
+> full before starting. Inspect the Phase 12 Evidence and ContextBuilder
+> implementations.
+>
+> Implement RepositoryAnswer, FlowTraceResponse/FlowStep,
+> ChangeImpactResponse/ImpactItem, ArchitectureResponse, and
+> ModelComparisonResponse/ModelResult exactly as specified. Add reusable
+> schema parsing errors, citation validation in the specified order with
+> downgrade-and-remove behavior, and exactly one bounded repair call. Test
+> every response schema, successful and failed repair, nonexistent evidence,
+> line drift, and stale index versions. Agent routing and feature prompt
+> integration remain out of scope. Append the development log and update
+> README to Phase 16 only after all tests pass.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added all required response schemas, generic Pydantic schema validation with repair-ready error details, canonical EvidenceContext citation validation, typed downgrade results, and a single-call structured-output repair helper.
+
+**Modified/rejected:** Kept controller integration and feature-specific prompts out of scope. EvidenceContext gained provider-independent repository/index IDs and file line counts so citation validation can check current provenance and real bounds without a database or provider dependency. Ingestion now stores file line counts in chunk metadata for future contexts while retaining a fallback for older indexes.
+
+**Resulting module/commit:** `backend/app/schemas/responses.py`, `backend/app/validation/`, `backend/app/agent/repair.py`, Phase 12 evidence-context metadata, ingestion chunk metadata, and `backend/tests/test_structured_output_validation.py`.
+
+**Test result:** All 117 backend tests passed, including six Phase 16 structured-output and citation-validation tests. The frontend Vitest suite passed one test. Both successful and failed repair tests proved exactly one additional provider call.

@@ -244,5 +244,6 @@ async def test_chunking_stage_persists_one_config_chunk_and_non_null_hashes() ->
         assert rows[0].content_hash == drafts[0].content_hash
         assert rows[0].start_line == rows[0].end_line == 1
         assert rows[0].embedding is None
+        assert rows[0].chunk_metadata["file_line_count"] == 1
 
     await engine.dispose()

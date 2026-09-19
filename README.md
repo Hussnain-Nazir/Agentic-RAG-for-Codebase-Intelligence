@@ -2,7 +2,7 @@
 
 Prism is an agentic RAG platform for understanding, navigating, tracing, and analyzing software repositories. It combines deterministic repository structure, hybrid retrieval, bounded tool execution, persistent memory, and evidence-grounded model reasoning to answer repository-level questions without sending an entire repository to a model.
 
-Phase 15 completes the eleven-tool registry with real hybrid search, symbol lookup, reference lookup, stored file reads, structural expansion, deterministic repository inspection, repository/session memory retrieval, evidence-grounded memory writes, optional review-history lookup, and bounded web search. Every repository tool shares ownership and current-index validation; agent tool-selection logic remains assigned to Phase 17.
+Phase 16 adds the complete structured response schema set, bounded one-call output repair, and citation validation against the exact EvidenceContext used for generation. Citations are checked for context membership, current file and index provenance, actual file bounds, and five-line excerpt tolerance; invalid citations are removed and affected responses are downgraded instead of trusted. Agent integration and feature-specific runtime prompts remain assigned to later phases.
 
 ## Local setup
 
@@ -28,4 +28,4 @@ For direct development, install `backend/requirements.txt` and run `uvicorn app.
 
 Installation state is short-lived, single-use, and bound to the authenticated Prism user who requested the install URL. The callback verifies through a GitHub user access token that the installation is accessible to the GitHub user before persisting it. User and installation tokens are not stored. Do not place the private key, client secret, installation tokens, or user tokens in the frontend, repository, logs, or model context.
 
-Status: Phase 15 complete
+Status: Phase 16 complete

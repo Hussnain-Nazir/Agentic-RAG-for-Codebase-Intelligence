@@ -55,6 +55,7 @@ async def chunk_repository_files(
         delete(CodeChunk).where(CodeChunk.repository_index_id == repository_index_id)
     )
     parsed_by_path = {item.file_path: item for item in parsed_files}
+    files_by_id = {item.id: item for item in files}
     drafts: list[ChunkDraft] = []
 
     for file in files:
@@ -115,6 +116,8 @@ async def chunk_repository_files(
             )
 
     for draft in drafts:
+        source_file = files_by_id[draft.file_id]
+        file_line_count = max(len((source_file.content or "").splitlines()), 1)
         session.add(
             CodeChunk(
                 repository_id=draft.repository_id,
@@ -134,6 +137,7 @@ async def chunk_repository_files(
                 chunk_metadata={
                     **draft.metadata,
                     "source_type": draft.source_type,
+                    "file_line_count": file_line_count,
                 },
             )
         )
