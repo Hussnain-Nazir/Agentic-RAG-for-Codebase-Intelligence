@@ -772,3 +772,43 @@
 **Resulting module/commit:** `backend/app/retrieval/`, `backend/app/models/code_symbol.py`, `backend/alembic/versions/0009_add_lexical_and_symbol_indexes.py`, `backend/tests/test_embeddings.py`, and `backend/tests/test_lexical_symbol_retrieval.py`.
 
 **Test result:** All 63 backend tests passed, including five new lexical/symbol retrieval tests and the updated semantic retrieval tests. The frontend Vitest suite passed one test. Alembic upgraded PostgreSQL to revision 0009; PostgreSQL confirmed the generated `search_vector` column, `pg_trgm`, and both required GIN indexes.
+
+### 2026-09-19 - Phase 11 hybrid retrieval and structural expansion
+
+**Prompt:**
+
+> Read PRISM_SPEC.md section 14 (Hybrid RAG Architecture) in full, especially
+> the frozen parameters table in 14.1, before starting. Inspect
+> backend/app/retrieval/vector_search.py, lexical_search.py, and
+> symbol_search.py from Phases 9-10, and
+> backend/app/models/code_relationship.py from Phase 7.
+>
+> This is Phase 11 of Prism. Implement:
+>
+> 1. backend/app/retrieval/ranking.py: per-signal min-max normalization,
+>    merging with the exact 0.5/0.3/0.2 weights and +0.5 exact-symbol boost,
+>    duplicate and greater-than-50-percent overlap collapse, and merging
+>    same-file chunks within five lines.
+> 2. backend/app/retrieval/expansion.py: bounded structural expansion through
+>    CodeRelationship rows for the top eight chunks, with at most two chunks
+>    per seed and 15 expansion chunks total.
+> 3. backend/app/retrieval/hybrid.py: a HybridRetriever that invokes all three
+>    signals with the frozen candidate counts, merges, deduplicates, ranks,
+>    expands, and returns RankedChunk results without applying the future
+>    ContextBuilder evidence cap.
+> 4. Tests proving exact-symbol boosting, overlap collapse, adjacent merging,
+>    bounded relationship expansion, and deterministic full-pipeline order.
+>
+> ContextBuilder token enforcement and Evidence construction are out of
+> scope. No LLM call may occur. Append a prompts.md entry and update README.md
+> to Phase 11 only after all tests pass.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added deterministic per-signal normalization, frozen weighted merging, exact-symbol boosting, chunk and overlap deduplication, adjacent evidence-unit merging, bounded CodeRelationship expansion, and the end-to-end HybridRetriever pipeline.
+
+**Modified/rejected:** Kept ContextBuilder token limits, final top-12 evidence selection, Evidence object construction, model calls, and agent integration out of scope. Adjacent transient evidence units preserve deterministic IDs and their original source chunk IDs. Structural expansion adds at most 15 related chunks in addition to the ranked seeds, matching section 14.1's expansion bound.
+
+**Resulting module/commit:** `backend/app/retrieval/ranking.py`, `backend/app/retrieval/expansion.py`, `backend/app/retrieval/hybrid.py`, `backend/app/retrieval/models.py`, `backend/app/retrieval/__init__.py`, and `backend/tests/test_hybrid_retrieval.py`.
+
+**Test result:** All 70 backend tests passed, including seven Phase 11 tests for frozen weights, exact-symbol boosting, duplicate and overlap collapse, adjacent merging, bounded structural expansion, and deterministic pipeline ordering. The frontend Vitest suite passed one test. No LLM module is imported or invoked by the Phase 11 retrieval path.
