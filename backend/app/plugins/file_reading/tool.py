@@ -7,9 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.code_chunk import CodeChunk
-from app.models.repository import Repository
 from app.models.repository_file import RepositoryFile, RepositoryFileStatus
-from app.models.repository_index import RepositoryIndex, RepositoryIndexState
 from app.plugins.file_reading.errors import (
     BinaryFileError,
     FileTooLargeError,
@@ -22,6 +20,7 @@ from app.plugins.file_reading.errors import (
     UnsupportedFileTypeError,
 )
 from app.tools.base import ExecutionContext
+from app.tools.repository_context import authorize_repository, current_repository_index
 
 SUPPORTED_EXTENSIONS = {
     ".py",
@@ -73,39 +72,12 @@ def _normalize_path(path: str) -> str:
     return normalized.as_posix()
 
 
-async def _authorized_repository(
-    session: AsyncSession,
-    repository_id: uuid.UUID,
-    ctx: ExecutionContext,
-) -> Repository:
-    repository = await session.get(Repository, repository_id)
-    if repository is None:
-        raise RepositoryNotFoundError("Repository not found")
-    if ctx.user_id is None or repository.owner_id != ctx.user_id:
-        raise UnauthorizedRepositoryAccessError("Repository access denied")
-    if ctx.repository_id is not None and ctx.repository_id != repository_id:
-        raise UnauthorizedRepositoryAccessError("Repository context does not match")
-    return repository
-
-
 async def _current_file(
     session: AsyncSession,
     repository_id: uuid.UUID,
     path: str,
 ) -> RepositoryFile:
-    current_index = await session.scalar(
-        select(RepositoryIndex)
-        .where(
-            RepositoryIndex.repository_id == repository_id,
-            RepositoryIndex.state.in_(
-                [RepositoryIndexState.READY, RepositoryIndexState.PARTIAL]
-            ),
-        )
-        .order_by(RepositoryIndex.version.desc())
-        .limit(1)
-    )
-    if current_index is None:
-        raise IndexNotReadyError("Repository index is not ready")
+    current_index = await current_repository_index(session, repository_id)
     repository_file = await session.scalar(
         select(RepositoryFile).where(
             RepositoryFile.repository_index_id == current_index.id,
@@ -137,7 +109,7 @@ async def _validated_file(
     ctx: ExecutionContext,
 ) -> tuple[RepositoryFile, str, str]:
     # The validation order below is a security contract from PRISM_SPEC.md 18.1.
-    await _authorized_repository(session, repository_id, ctx)
+    await authorize_repository(session, repository_id, ctx)
     normalized = _normalize_path(path)
     repository_file = await _current_file(session, repository_id, normalized)
     if PurePosixPath(normalized).suffix.lower() not in SUPPORTED_EXTENSIONS:

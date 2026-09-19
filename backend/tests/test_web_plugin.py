@@ -243,7 +243,15 @@ async def test_registry_registers_file_and_web_plugin_tools(web_session) -> None
     )
 
     assert [tool.name for tool in registry.list()] == [
+        "search_codebase",
+        "find_symbol",
+        "find_references",
         "read_file",
         "read_file_range",
+        "get_related_files",
+        "inspect_repository",
+        "retrieve_memory",
+        "save_memory",
+        "get_review_history",
         "search_web",
     ]

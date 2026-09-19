@@ -24,13 +24,38 @@ class ToolRegistry:
         *,
         session,
         web_search_provider=None,
+        embedding_provider=None,
         settings=None,
     ) -> None:
         from app.plugins.file_reading.tool import ReadFileRangeTool, ReadFileTool
         from app.plugins.web_search.provider import SerpApiProvider
         from app.plugins.web_search.tool import SearchWebTool
+        from app.tools.repository_tools import (
+            FindReferencesTool,
+            FindSymbolTool,
+            GetRelatedFilesTool,
+            GetReviewHistoryTool,
+            InspectRepositoryTool,
+            RetrieveMemoryTool,
+            SaveMemoryTool,
+            SearchCodebaseTool,
+        )
 
         provider = web_search_provider or SerpApiProvider(settings=settings)
+        self.register(
+            SearchCodebaseTool(
+                session,
+                embedding_provider=embedding_provider,
+                settings=settings,
+            )
+        )
+        self.register(FindSymbolTool(session))
+        self.register(FindReferencesTool(session))
         self.register(ReadFileTool(session))
         self.register(ReadFileRangeTool(session))
+        self.register(GetRelatedFilesTool(session))
+        self.register(InspectRepositoryTool(session))
+        self.register(RetrieveMemoryTool(session))
+        self.register(SaveMemoryTool(session))
+        self.register(GetReviewHistoryTool(session))
         self.register(SearchWebTool(session, provider))

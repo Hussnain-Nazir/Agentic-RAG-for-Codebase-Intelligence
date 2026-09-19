@@ -5,12 +5,9 @@ import httpx
 from pydantic import BaseModel
 
 from app.config import Settings, get_settings
+from app.tools.errors import WebSearchProviderError
 
 SERPAPI_SEARCH_URL = "https://serpapi.com/search"
-
-
-class WebSearchProviderError(RuntimeError):
-    pass
 
 
 class WebResult(BaseModel):

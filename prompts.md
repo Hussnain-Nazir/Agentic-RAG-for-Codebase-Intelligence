@@ -900,3 +900,31 @@
 **Resulting module/commit:** `backend/app/plugins/`, `backend/app/tools/`, `backend/app/models/web_source.py`, `backend/alembic/versions/0012_add_web_sources.py`, `backend/app/config.py`, `.env.example`, `backend/tests/test_file_plugin.py`, and `backend/tests/test_web_plugin.py`.
 
 **Test result:** All 104 backend tests passed, including nine file-plugin and five web-plugin tests. The frontend Vitest suite passed one test. Alembic upgraded PostgreSQL to revision 0012 and the web-source cache schema was confirmed. Every SerpAPI test used `httpx.MockTransport` or a fake provider; no test made a real SerpAPI request.
+
+### 2026-09-19 - Phase 15 complete tool registry
+
+**Prompt:**
+
+> Read PRISM_SPEC.md section 17 (Skills/Tool Registry, including the full
+> contract table in 17.1) in full before starting. Inspect the hybrid
+> retriever, evidence layer, memory service, and Phase 4 ToolRegistry.
+>
+> Implement real Tool classes for search_codebase, find_symbol,
+> find_references, get_related_files, inspect_repository, retrieve_memory,
+> save_memory, and get_review_history, using the exact repository-scoped
+> contracts. Register them with the existing read_file, read_file_range, and
+> search_web plugins so ToolRegistry lists exactly eleven tools. Centralize
+> typed errors and add deterministic happy-path, authorization, current-index,
+> validation, and registry tests. Agent decision logic remains out of scope
+> until Phase 17. Append the development log and update README to Phase 15
+> only after all tests pass.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added provider-independent tool schemas, eight real repository/memory tools, shared authorization and current-index helpers, centralized typed tool errors, deterministic architecture inspection, symbol/reference mappings, structural evidence expansion, and exact eleven-tool registry assembly.
+
+**Modified/rejected:** Kept tool-selection and routing logic out of scope. SearchCodebase lazily constructs the local embedding provider when one is not injected, keeping registry construction lightweight and tests deterministic. Optional review history only queries saved REVIEW findings and does not implement the review feature.
+
+**Resulting module/commit:** `backend/app/tools/errors.py`, `backend/app/tools/repository_context.py`, `backend/app/tools/schemas.py`, `backend/app/tools/repository_tools.py`, `backend/app/tools/registry.py`, plugin error integration, and `backend/tests/test_tool_registry.py`.
+
+**Test result:** All 111 backend tests passed, including seven Phase 15 registry/tool integration tests. The frontend Vitest suite passed one test. ToolRegistry returned exactly the eleven specification names in the frozen order.

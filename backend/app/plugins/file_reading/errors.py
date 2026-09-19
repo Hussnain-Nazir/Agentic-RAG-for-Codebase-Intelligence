@@ -1,38 +1,23 @@
-class FileReadingError(ValueError):
-    pass
+from app.tools.errors import (
+    BinaryFileError,
+    FileTooLargeError,
+    IndexNotReadyError,
+    LineRangeError,
+    PathTraversalError,
+    RepositoryFileNotFoundError,
+    RepositoryNotFoundError,
+    UnauthorizedRepositoryAccessError,
+    UnsupportedFileTypeError,
+)
 
-
-class RepositoryNotFoundError(FileReadingError):
-    pass
-
-
-class UnauthorizedRepositoryAccessError(FileReadingError):
-    pass
-
-
-class PathTraversalError(FileReadingError):
-    pass
-
-
-class RepositoryFileNotFoundError(FileReadingError):
-    pass
-
-
-class UnsupportedFileTypeError(FileReadingError):
-    pass
-
-
-class BinaryFileError(FileReadingError):
-    pass
-
-
-class FileTooLargeError(FileReadingError):
-    pass
-
-
-class LineRangeError(FileReadingError):
-    pass
-
-
-class IndexNotReadyError(FileReadingError):
-    pass
+__all__ = [
+    "BinaryFileError",
+    "FileTooLargeError",
+    "IndexNotReadyError",
+    "LineRangeError",
+    "PathTraversalError",
+    "RepositoryFileNotFoundError",
+    "RepositoryNotFoundError",
+    "UnauthorizedRepositoryAccessError",
+    "UnsupportedFileTypeError",
+]
