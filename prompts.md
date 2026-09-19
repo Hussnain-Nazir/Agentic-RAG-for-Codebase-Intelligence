@@ -956,3 +956,31 @@
 **Resulting module/commit:** `backend/app/schemas/responses.py`, `backend/app/validation/`, `backend/app/agent/repair.py`, Phase 12 evidence-context metadata, ingestion chunk metadata, and `backend/tests/test_structured_output_validation.py`.
 
 **Test result:** All 117 backend tests passed, including six Phase 16 structured-output and citation-validation tests. The frontend Vitest suite passed one test. Both successful and failed repair tests proved exactly one additional provider call.
+
+### 2026-09-20 - Phase 17 bounded agent controller
+
+**Prompt:**
+
+> Read PRISM_SPEC.md section 16 (Agent Architecture & Execution Loop) in full
+> before starting. Inspect the Phase 4 controller and hooks plus the Phase
+> 12-16 tools, context, memory, and validation layers.
+>
+> Replace the scaffold with deterministic task classification and the single
+> bounded AgentController lifecycle: authorization, memory, hook-wrapped tool
+> execution, rule-based evidence gathering, bounded structural and web
+> expansion, EvidenceContext construction, exactly one selected model slot,
+> schema and citation validation, eligible memory persistence, and complete
+> run/tool/model traces. Enforce every Section 16.4 bound and keep direct
+> file, symbol, and reference routes model-free. Feature-specific flow and
+> impact investigation prompts remain out of scope. Append the development
+> log and update README to Phase 17 only after all tests pass.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added deterministic task classification, a single authorization-scoped AgentController, hook-wrapped registry execution, provider-independent evidence-context assembly from tool outputs, selected-slot structured generation, bounded repair and citation validation, automatic eligible memory writes, partial-result bound termination, and persisted run/tool/model traces.
+
+**Modified/rejected:** Kept feature-specific flow-trace and impact prompts and investigation strategies out of scope. Added an injectable deterministic ExecutionPlan for later strategies and bound-forcing tests; the controller remains the only orchestrator. Provider errors are traced and surfaced without invoking the other model slot.
+
+**Resulting module/commit:** `backend/app/agent/classification.py`, `backend/app/agent/controller.py`, `backend/app/evidence/context_builder.py`, `backend/app/evidence/builder.py`, and `backend/tests/test_agent_orchestration.py`.
+
+**Test result:** All 139 backend tests passed, including 22 Phase 17 classification, orchestration, trace, failure, direct-route, conditional-web, repair, and hard-bound tests. The frontend Vitest suite passed one test. Bound tests separately verified eight tool iterations, three structural rounds, 15 structural chunks, two web searches, one normal model call, and one repair attempt.

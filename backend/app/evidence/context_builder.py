@@ -191,6 +191,78 @@ def _dedupe_evidence(evidence: list[Evidence]) -> list[Evidence]:
 
 
 class ContextBuilder:
+    def build_from_evidence(
+        self,
+        task: Any,
+        task_type: Any,
+        repository_memory: list[Any],
+        repository_evidence: list[Evidence],
+        web_evidence: list[WebEvidenceItem] | None = None,
+    ) -> EvidenceContext:
+        task_model = _task_model(task)
+        task_type_value = _task_type_value(task_type)
+        relevant_memory = _filter_memory(
+            repository_memory,
+            _keywords(task_model, task_type_value),
+        )
+        repository_id = (
+            repository_evidence[0].repository_id if repository_evidence else None
+        )
+        repository_index_id = (
+            repository_evidence[0].repository_index_id
+            if repository_evidence
+            else None
+        )
+        combined = _dedupe_evidence(
+            [
+                *repository_evidence,
+                *_web_evidence(web_evidence, repository_id, repository_index_id),
+            ]
+        )
+        kept: list[Evidence] = []
+        used_chars = 0
+        for item in combined[:MAX_EVIDENCE_ITEMS]:
+            item_chars = len(item.content_excerpt)
+            if used_chars + item_chars > MAX_CONTEXT_CHARS:
+                break
+            kept.append(item)
+            used_chars += item_chars
+        kept_memory: list[RepositoryMemoryContextItem] = []
+        for item in relevant_memory:
+            if used_chars + len(item.content) > MAX_CONTEXT_CHARS:
+                break
+            kept_memory.append(item)
+            used_chars += len(item.content)
+        file_line_counts: dict[str, int] = {}
+        for item in kept:
+            if item.file_path and item.end_line is not None:
+                stored_count = int(
+                    item.retrieval_metadata.get("file_line_count", item.end_line)
+                )
+                file_line_counts[item.file_path] = max(
+                    stored_count,
+                    file_line_counts.get(item.file_path, 0),
+                )
+        context_seed = "|".join(
+            [
+                task_model.query,
+                task_type_value,
+                *(str(item.evidence_id) for item in kept),
+            ]
+        )
+        return EvidenceContext(
+            context_id=uuid.uuid5(uuid.NAMESPACE_URL, context_seed),
+            repository_id=repository_id,
+            repository_index_id=repository_index_id,
+            file_line_counts=file_line_counts,
+            task=task_model,
+            task_type=task_type_value,
+            repository_memory=kept_memory,
+            evidence=kept,
+            quality=classify_evidence_quality(kept),
+            estimated_tokens=math.ceil(used_chars / 4),
+        )
+
     def build(
         self,
         task: Any,

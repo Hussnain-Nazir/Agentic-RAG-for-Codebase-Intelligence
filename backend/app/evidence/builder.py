@@ -76,6 +76,10 @@ def build_evidence(ranked_chunks: list[RankedChunk]) -> list[Evidence]:
                         str(item) for item in candidate.source_chunk_ids
                     ],
                     "is_structural_expansion": candidate.signal == "structural",
+                    "file_line_count": candidate.chunk.chunk_metadata.get(
+                        "file_line_count",
+                        candidate.chunk.end_line,
+                    ),
                 },
                 external_source_metadata=None,
             )
