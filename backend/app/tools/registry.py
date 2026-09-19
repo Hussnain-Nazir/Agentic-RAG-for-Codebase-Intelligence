@@ -18,3 +18,19 @@ class ToolRegistry:
 
     def list(self) -> list[Tool]:
         return list(self._tools.values())
+
+    def register_builtin_plugins(
+        self,
+        *,
+        session,
+        web_search_provider=None,
+        settings=None,
+    ) -> None:
+        from app.plugins.file_reading.tool import ReadFileRangeTool, ReadFileTool
+        from app.plugins.web_search.provider import SerpApiProvider
+        from app.plugins.web_search.tool import SearchWebTool
+
+        provider = web_search_provider or SerpApiProvider(settings=settings)
+        self.register(ReadFileTool(session))
+        self.register(ReadFileRangeTool(session))
+        self.register(SearchWebTool(session, provider))

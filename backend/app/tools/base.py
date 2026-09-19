@@ -9,6 +9,7 @@ from pydantic import BaseModel
 class ExecutionContext:
     repository_id: uuid.UUID | None = None
     session_id: uuid.UUID | None = None
+    user_id: uuid.UUID | None = None
 
 
 class Tool(Protocol):

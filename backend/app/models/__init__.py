@@ -28,6 +28,7 @@ from app.models.repository_memory import (
 from app.models.session import Session
 from app.models.tool_call import ToolCall
 from app.models.user import User
+from app.models.web_source import WebSource
 
 __all__ = [
     "AgentRun",
@@ -62,4 +63,5 @@ __all__ = [
     "Session",
     "ToolCall",
     "User",
+    "WebSource",
 ]

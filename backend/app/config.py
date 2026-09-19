@@ -30,6 +30,7 @@ class Settings(BaseSettings):
 
     web_search_provider: str | None = None
     web_search_api_key: str | None = None
+    serpapi_api_key: str | None = None
 
     max_zip_size_mb: int = 200
     max_file_size_mb: float = 1.5

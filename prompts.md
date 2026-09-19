@@ -871,3 +871,32 @@
 **Resulting module/commit:** `backend/app/models/repository_memory.py`, `backend/app/models/finding.py`, `backend/app/models/message.py`, `backend/app/memory/`, `backend/alembic/versions/0010_add_memory_and_findings.py`, and `backend/tests/test_memory.py`.
 
 **Test result:** All 90 backend tests passed, including five Phase 13 memory tests. The frontend Vitest suite passed one test. Alembic upgraded PostgreSQL through revisions 0010 and 0011; PostgreSQL confirmed UUID-array evidence columns, and smoke tests verified memory/finding writes, ORM round trips, default retrieval, changed-file invalidation, and cascade cleanup.
+
+### 2026-09-19 - Phase 14 file-reading and web-search plugins
+
+**Prompt:**
+
+> Read PRISM_SPEC.md section 18 (File Reading Plugin, Web Search Plugin) in
+> full before starting. Inspect backend/app/tools/base.py and
+> backend/app/tools/registry.py from Phase 4, and the CodeChunk and
+> RepositoryFile models.
+>
+> Implement real authenticated `read_file` and `read_file_range` tools over
+> stored current-index content with the specified validation order and line
+> bounds. Implement a SerpAPI provider using its documented `/search`
+> contract, an independently callable `search_web` tool with an eight-second
+> timeout and 24-hour query-hash cache, safe empty error results, the
+> `web_sources` persistence model, and plugin registration. Add deterministic
+> file and mocked-web tests. Conditional agent invocation remains out of
+> scope until Phase 17. Append the development log, update README to Phase
+> 14, and document SerpAPI setup only after all tests pass.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added stored-index file and line-range tools, ordered authorization and safety validation, SerpAPI organic-result mapping, bounded and cached web search, safe provider failure handling, the web-source cache model and migration, and built-in plugin registration.
+
+**Modified/rejected:** Kept task-classification wiring out of scope. The tool exposes the Phase 17 trigger helper but always executes when explicitly called. Cache rows store only normalized-query hashes and public result metadata; API keys and raw provider errors are never persisted or returned.
+
+**Resulting module/commit:** `backend/app/plugins/`, `backend/app/tools/`, `backend/app/models/web_source.py`, `backend/alembic/versions/0012_add_web_sources.py`, `backend/app/config.py`, `.env.example`, `backend/tests/test_file_plugin.py`, and `backend/tests/test_web_plugin.py`.
+
+**Test result:** All 104 backend tests passed, including nine file-plugin and five web-plugin tests. The frontend Vitest suite passed one test. Alembic upgraded PostgreSQL to revision 0012 and the web-source cache schema was confirmed. Every SerpAPI test used `httpx.MockTransport` or a fake provider; no test made a real SerpAPI request.
