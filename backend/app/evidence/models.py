@@ -41,6 +41,9 @@ class RepositoryMemoryContextItem(BaseModel):
     topic: str
     content: str
     tags: list[str] = Field(default_factory=list)
+    evidence_ids: list[uuid.UUID] = Field(default_factory=list)
+    confidence: str | None = None
+    source: str | None = None
     is_stale: bool = False
 
 

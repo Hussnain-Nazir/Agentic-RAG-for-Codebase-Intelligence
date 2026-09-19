@@ -81,6 +81,20 @@ def _memory_model(item: Any) -> RepositoryMemoryContextItem:
         topic=str(getattr(item, "topic", "")),
         content=str(getattr(item, "content", "")),
         tags=list(getattr(item, "tags", []) or []),
+        evidence_ids=[
+            uuid.UUID(str(value))
+            for value in (getattr(item, "evidence_ids", []) or [])
+        ],
+        confidence=(
+            str(getattr(getattr(item, "confidence", None), "value", getattr(item, "confidence", None)))
+            if getattr(item, "confidence", None) is not None
+            else None
+        ),
+        source=(
+            str(getattr(getattr(item, "source", None), "value", getattr(item, "source", None)))
+            if getattr(item, "source", None) is not None
+            else None
+        ),
         is_stale=bool(getattr(item, "is_stale", False)),
     )
 

@@ -1,89 +1,50 @@
 import uuid
-from typing import Protocol
+from collections.abc import Sequence
+from typing import Any, Protocol
 
-from sqlalchemy import or_, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.models.memory_item import MemoryItem
+from app.models.finding import Finding
+from app.models.repository_memory import RepositoryMemory
 
 
 class MemoryServiceProtocol(Protocol):
-    async def retrieve(
-        self,
-        repository_id: uuid.UUID,
-        query: str,
-    ) -> list[MemoryItem]: ...
+    async def retrieve_session_memory(
+        self, session_id: uuid.UUID, query: str
+    ) -> str: ...
 
-    async def save(
+    async def retrieve_repository_memory(
         self,
         repository_id: uuid.UUID,
-        repository_index_version: int,
-        scope: str,
-        topic: str,
+        topic_or_query: str,
+        include_stale: bool = False,
+    ) -> list[RepositoryMemory]: ...
+
+    async def save_repository_memory(
+        self,
+        repository_id: uuid.UUID,
+        type: Any,
         content: str,
-    ) -> MemoryItem: ...
+        evidence_ids: Sequence[uuid.UUID],
+        source: Any,
+        **kwargs: Any,
+    ) -> RepositoryMemory: ...
 
     async def invalidate_stale(
         self,
         repository_id: uuid.UUID,
-        current_index_version: int,
+        changed_file_paths: Sequence[str],
     ) -> int: ...
 
-
-class MemoryService:
-    """Minimal persistence scaffold pending the dedicated memory phase."""
-
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
-
-    async def retrieve(
+    async def save_finding(
         self,
         repository_id: uuid.UUID,
-        query: str,
-    ) -> list[MemoryItem]:
-        pattern = f"%{query}%"
-        result = await self._session.scalars(
-            select(MemoryItem)
-            .where(
-                MemoryItem.repository_id == repository_id,
-                MemoryItem.is_stale.is_(False),
-                or_(MemoryItem.topic.ilike(pattern), MemoryItem.content.ilike(pattern)),
-            )
-            .order_by(MemoryItem.created_at)
-        )
-        return list(result)
+        type: Any,
+        content: dict[str, Any],
+        evidence_ids: Sequence[uuid.UUID],
+        session_id: uuid.UUID | None,
+        **kwargs: Any,
+    ) -> Finding: ...
 
-    async def save(
-        self,
-        repository_id: uuid.UUID,
-        repository_index_version: int,
-        scope: str,
-        topic: str,
-        content: str,
-    ) -> MemoryItem:
-        item = MemoryItem(
-            repository_id=repository_id,
-            repository_index_version=repository_index_version,
-            scope=scope,
-            topic=topic,
-            content=content,
-        )
-        self._session.add(item)
-        await self._session.flush()
-        return item
 
-    async def invalidate_stale(
-        self,
-        repository_id: uuid.UUID,
-        current_index_version: int,
-    ) -> int:
-        result = await self._session.execute(
-            update(MemoryItem)
-            .where(
-                MemoryItem.repository_id == repository_id,
-                MemoryItem.repository_index_version != current_index_version,
-                MemoryItem.is_stale.is_(False),
-            )
-            .values(is_stale=True)
-        )
-        return result.rowcount or 0
+from app.memory.service import MemoryService  # noqa: E402
+
+__all__ = ["MemoryService", "MemoryServiceProtocol"]

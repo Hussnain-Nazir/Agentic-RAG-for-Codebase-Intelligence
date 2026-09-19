@@ -10,6 +10,8 @@ from app.db.base import Base
 if TYPE_CHECKING:
     from app.models.agent_run import AgentRun
     from app.models.repository import Repository
+    from app.models.finding import Finding
+    from app.models.message import Message
     from app.models.user import User
 
 
@@ -38,5 +40,14 @@ class Session(Base):
     agent_runs: Mapped[list["AgentRun"]] = relationship(
         back_populates="session",
         cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    messages: Mapped[list["Message"]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    findings: Mapped[list["Finding"]] = relationship(
+        back_populates="session",
         passive_deletes=True,
     )

@@ -1,4 +1,3 @@
-import uuid
 from typing import Any
 
 from app.evidence.models import Evidence
@@ -56,13 +55,9 @@ def build_evidence(ranked_chunks: list[RankedChunk]) -> list[Evidence]:
     evidence: list[Evidence] = []
     for candidate in ranked_chunks:
         chunk = candidate.chunk
-        evidence_id = uuid.uuid5(
-            uuid.NAMESPACE_URL,
-            f"prism:{chunk.repository_id}:{chunk.repository_index_id}:{chunk.id}",
-        )
         evidence.append(
             Evidence(
-                evidence_id=evidence_id,
+                evidence_id=chunk.id,
                 repository_id=chunk.repository_id,
                 repository_index_id=chunk.repository_index_id,
                 source_type=_source_type(candidate),

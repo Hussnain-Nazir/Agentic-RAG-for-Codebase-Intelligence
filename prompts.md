@@ -843,3 +843,31 @@
 **Resulting module/commit:** `backend/app/evidence/`, `backend/app/retrieval/models.py`, `backend/app/retrieval/ranking.py`, `backend/app/retrieval/expansion.py`, `backend/app/retrieval/symbol_search.py`, and `backend/tests/test_context_builder.py`.
 
 **Test result:** All 85 backend tests passed, including five Phase 12 context-builder tests. The frontend Vitest suite passed one test. EvidenceContext contains no model/provider-specific fields or imports.
+
+### 2026-09-19 - Phase 13 memory architecture
+
+**Prompt:**
+
+> Read PRISM_SPEC.md section 19 (Memory Architecture) in full before
+> starting. Inspect backend/app/memory/base.py from Phase 4 and
+> backend/app/evidence/context_builder.py from Phase 12.
+>
+> Implement the repository_memories and findings models and migration, then
+> replace the Phase 4 memory scaffold with session-memory retrieval,
+> repository-memory retrieval and persistence, changed-file staleness
+> invalidation, evidence-required finding persistence, and the bounded
+> automatic-write rules from section 19.2. Add deterministic tests for stale
+> filtering, targeted invalidation, finding validation, and automatic-write
+> eligibility. Real incremental-sync integration remains out of scope until
+> Phase 20. Append the development log and update README to Phase 13 only
+> after all tests pass.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added repository memory, finding, and conversation-message persistence; implemented bounded session summaries, repository-memory search, evidence-grounded writes, changed-file invalidation, finding validation, and the automatic-write eligibility function used by the future controller call site.
+
+**Modified/rejected:** Kept incremental-sync wiring out of scope. The Phase 4 `memory_items` scaffold table remains in the migration history for safety but is no longer used by MemoryService. Added the specification's `messages` table because session-memory retrieval cannot be implemented without persisted conversation turns.
+
+**Resulting module/commit:** `backend/app/models/repository_memory.py`, `backend/app/models/finding.py`, `backend/app/models/message.py`, `backend/app/memory/`, `backend/alembic/versions/0010_add_memory_and_findings.py`, and `backend/tests/test_memory.py`.
+
+**Test result:** All 90 backend tests passed, including five Phase 13 memory tests. The frontend Vitest suite passed one test. Alembic upgraded PostgreSQL through revisions 0010 and 0011; PostgreSQL confirmed UUID-array evidence columns, and smoke tests verified memory/finding writes, ORM round trips, default retrieval, changed-file invalidation, and cascade cleanup.

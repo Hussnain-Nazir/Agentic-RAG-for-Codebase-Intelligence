@@ -2,7 +2,7 @@
 
 Prism is an agentic RAG platform for understanding, navigating, tracing, and analyzing software repositories. It combines deterministic repository structure, hybrid retrieval, bounded tool execution, persistent memory, and evidence-grounded model reasoning to answer repository-level questions without sending an entire repository to a model.
 
-Phase 12 adds provider-independent Evidence and EvidenceContext construction over hybrid retrieval results. Context building deduplicates repository evidence, preserves relationship and provenance metadata, filters relevant repository memory, accepts optional web evidence, classifies evidence quality, and enforces the final 12-item and approximate 6,000-token limits by dropping whole lower-ranked chunks. Agent control and structured response generation remain assigned to later phases.
+Phase 13 adds evidence-grounded repository memory, saved findings, and bounded session-conversation summaries. Repository memory preserves index version, evidence IDs, type, confidence, scope, source, and staleness; changed-file invalidation marks only affected facts stale; automatic writes are restricted to high-confidence repository Q&A or architecture results with CODE evidence. Incremental-sync integration remains assigned to Phase 20.
 
 ## Local setup
 
@@ -26,4 +26,4 @@ For direct development, install `backend/requirements.txt` and run `uvicorn app.
 
 Installation state is short-lived, single-use, and bound to the authenticated Prism user who requested the install URL. The callback verifies through a GitHub user access token that the installation is accessible to the GitHub user before persisting it. User and installation tokens are not stored. Do not place the private key, client secret, installation tokens, or user tokens in the frontend, repository, logs, or model context.
 
-Status: Phase 12 complete
+Status: Phase 13 complete

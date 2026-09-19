@@ -201,34 +201,8 @@ def test_invalid_model_output_retains_elapsed_time_and_token_usage() -> None:
     asyncio.run(exercise())
 
 
-def test_minimal_memory_service_can_save_retrieve_and_invalidate() -> None:
-    async def exercise() -> None:
-        async for session in database_session():
-            user = User(email="memory@example.com", hashed_password="unused")
-            repository = Repository(
-                owner=user,
-                source_type=RepositorySourceType.UPLOAD,
-                name="memory-fixture",
-                default_branch="main",
-                selected_branch="main",
-                access_status=RepositoryAccessStatus.ACTIVE,
-            )
-            session.add(repository)
-            await session.flush()
-            memory = MemoryService(session)
-
-            await memory.save(
-                repository.id,
-                repository_index_version=1,
-                scope="repository",
-                topic="authentication",
-                content="JWT authentication is used",
-            )
-            assert len(await memory.retrieve(repository.id, "authentication")) == 1
-            assert await memory.invalidate_stale(repository.id, 2) == 1
-            assert await memory.retrieve(repository.id, "authentication") == []
-
-    asyncio.run(exercise())
+def test_memory_service_export_uses_phase_thirteen_implementation() -> None:
+    assert MemoryService.__module__ == "app.memory.service"
 
 
 def test_evidence_model_accepts_all_specified_fields() -> None:
