@@ -18,7 +18,11 @@ from app.db.session import get_db
 from app.llm.base import Message
 from app.llm.factory import get_model_a, get_model_b
 from app.llm.mock import MockProvider
-from app.llm.openai_compatible import OpenAICompatibleProvider, _strict_json_schema
+from app.llm.openai_compatible import (
+    LLMProviderRequestError,
+    OpenAICompatibleProvider,
+    _strict_json_schema,
+)
 from app.main import create_app
 from app.models.user import User
 
@@ -162,6 +166,43 @@ def test_openai_compatible_provider_uses_mock_transport() -> None:
     assert set(transport_schema["schema"]["$defs"]["Evidence"]["properties"]) == {
         "evidence_id"
     }
+
+
+def test_openai_compatible_provider_sanitizes_provider_error_details() -> None:
+    secret = "test-provider-secret"
+    base_url = "https://models.test.invalid/v1"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={
+                "error": {
+                    "message": (
+                        f"schema rejected; key={secret}; endpoint={base_url}"
+                    )
+                }
+            },
+        )
+
+    provider = OpenAICompatibleProvider(
+        name="test-model",
+        base_url=base_url,
+        api_key=secret,
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(LLMProviderRequestError) as exc_info:
+        asyncio.run(
+            provider.complete(
+                [Message(role="user", content="question")],
+                StructuredAnswer,
+                10,
+            )
+        )
+
+    assert "schema rejected" in exc_info.value.safe_message
+    assert secret not in exc_info.value.safe_message
+    assert base_url not in exc_info.value.safe_message
 
 
 def test_model_factories_use_independent_slot_configuration() -> None:
