@@ -1026,3 +1026,28 @@
 **Resulting module/commit:** `backend/app/agent/prompts/v1/repository_qa.md`, `backend/app/agent/controller.py`, `backend/app/api/routes/analysis.py`, `backend/app/main.py`, `backend/tests/test_codebase_qa.py`, `README.md`, and `prompts.md`.
 
 **Test result:** All 142 backend tests passed, including three Phase 18 tests. The existing frontend Vitest test passed after restoring dependencies from the committed lockfile. Python bytecode compilation for `backend/app` passed.
+
+### 2026-09-20 - Phase 19 multi-file flow tracing
+
+**Prompt:**
+
+> Read PRISM_SPEC.md sections 16.3, 23.B, the Flow Tracing row in section
+> 30.0, and the FlowTraceResponse and FlowStep schemas in section 22.2.
+> Implement a versioned flow-tracing prompt, bounded feature-specific
+> investigation logic using find_symbol, find_references, and
+> get_related_files, controller integration producing FlowTraceResponse, and
+> POST /repositories/{id}/flow-trace with the Phase 18 authorization pattern.
+> Add deterministic tests for a known cross-file flow, an unresolved external
+> call, and bound exhaustion returning a valid partial trace. Keep change
+> impact and frontend work out of scope. Update the log and README only after
+> all tests pass.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added the versioned flow-trace prompt, a deterministic investigation state that follows exact symbol definitions through references and related evidence, controller-owned bound enforcement, flow observations in trusted prompt metadata, schema-valid partial traces, and the authenticated flow-trace API endpoint.
+
+**Modified/rejected:** Kept orchestration inside the existing single AgentController. The investigation module receives a hook-wrapped controller callback and does not define independent bounds. Fuzzy symbol matches are not accepted as definitions. When structural evidence reaches the shared cap, further expansion stops without exceeding it. Change-impact behavior and frontend work remain unimplemented.
+
+**Resulting module/commit:** `backend/app/agent/prompts/v1/flow_trace.md`, `backend/app/agent/investigations/`, `backend/app/agent/controller.py`, `backend/app/api/routes/analysis.py`, `backend/tests/test_flow_trace.py`, `backend/tests/test_agent_orchestration.py`, `README.md`, and `prompts.md`.
+
+**Test result:** All 157 backend tests passed. Phase 19 tests verified an ordered observed call across fixture files, an undefined external call marked unresolved without a fabricated transition, and tool-bound exhaustion returning a valid partial FlowTraceResponse.

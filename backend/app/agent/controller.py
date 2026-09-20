@@ -19,6 +19,12 @@ from app.agent.classification import (
     extract_reference_symbol,
     extract_symbol,
 )
+from app.agent.investigations.flow_trace import (
+    FlowInvestigationState,
+    enforce_observed_transitions,
+    investigate_flow_trace,
+    partial_flow_trace,
+)
 from app.agent.repair import attempt_repair
 from app.evidence.context_builder import ContextBuilder
 from app.evidence.models import Evidence, EvidenceContext, EvidenceQuality, WebEvidenceItem
@@ -57,6 +63,7 @@ MAX_REPAIR_ATTEMPTS = 1
 REPOSITORY_QA_PROMPT_PATH = (
     Path(__file__).parent / "prompts" / "v1" / "repository_qa.md"
 )
+FLOW_TRACE_PROMPT_PATH = Path(__file__).parent / "prompts" / "v1" / "flow_trace.md"
 PROMPT_MESSAGE_SPLIT = "<!-- MESSAGE_SPLIT -->"
 
 
@@ -96,6 +103,11 @@ class AgentProviderError(RuntimeError):
 @lru_cache(maxsize=1)
 def _repository_qa_template() -> str:
     return REPOSITORY_QA_PROMPT_PATH.read_text(encoding="utf-8")
+
+
+@lru_cache(maxsize=1)
+def _flow_trace_template() -> str:
+    return FLOW_TRACE_PROMPT_PATH.read_text(encoding="utf-8")
 
 
 class AgentExecutionResult(BaseModel):
@@ -243,6 +255,25 @@ class AgentController:
                 Message(role="system", content=system_content.strip()),
                 Message(role="user", content=user_content.strip()),
             ]
+        if task_type is TaskType.FLOW_TRACE:
+            rendered = (
+                _flow_trace_template()
+                .replace("{{USER_TASK}}", task)
+                .replace(
+                    "{{TRUSTED_METADATA}}",
+                    json.dumps(trusted_metadata, sort_keys=True),
+                )
+                .replace("{{UNTRUSTED_EVIDENCE}}", context.model_dump_json())
+                .replace(
+                    "{{RESPONSE_SCHEMA}}",
+                    json.dumps(FlowTraceResponse.model_json_schema(), sort_keys=True),
+                )
+            )
+            system_content, user_content = rendered.split(PROMPT_MESSAGE_SPLIT, 1)
+            return [
+                Message(role="system", content=system_content.strip()),
+                Message(role="user", content=user_content.strip()),
+            ]
         return [
             Message(
                 role="system",
@@ -295,6 +326,7 @@ class AgentController:
         self._session.add(run)
         await self._session.flush()
         counters = _Counters()
+        flow_state = FlowInvestigationState()
 
         try:
             direct = await self._run_direct(
@@ -369,6 +401,67 @@ class AgentController:
                         qa_entity = candidate
                         break
 
+            flow_structural_evidence: list[Evidence] = []
+            if task_type is TaskType.FLOW_TRACE:
+                flow_state.evidence = list(repository_evidence)
+
+                async def execute_flow_tool(
+                    tool_name: str,
+                    input_model: BaseModel,
+                ) -> BaseModel:
+                    if tool_name != "get_related_files":
+                        return await self._execute_tool(
+                            run,
+                            counters,
+                            tool_name,
+                            input_model,
+                            ctx,
+                        )
+                    if counters.structural_chunks >= MAX_STRUCTURAL_CHUNKS:
+                        return self._registry.get(tool_name).output_schema([])
+                    if counters.structural_rounds >= MAX_STRUCTURAL_ROUNDS:
+                        raise _BoundsExceeded(
+                            "Structural expansion round bound exceeded"
+                        )
+                    counters.structural_rounds += 1
+                    result = await self._execute_tool(
+                        run,
+                        counters,
+                        tool_name,
+                        input_model,
+                        ctx,
+                    )
+                    root = list(getattr(result, "root", []))
+                    remaining = MAX_STRUCTURAL_CHUNKS - counters.structural_chunks
+                    if remaining <= 0:
+                        raise _BoundsExceeded(
+                            "Structural expansion chunk bound exceeded"
+                        )
+                    if len(root) > remaining:
+                        result = type(result)(root[:remaining])
+                        root = list(getattr(result, "root", []))
+                    counters.structural_chunks += len(root)
+                    return result
+
+                await investigate_flow_trace(
+                    task,
+                    repository_id,
+                    execute_flow_tool,
+                    flow_state,
+                )
+                trusted_metadata["flow_observations"] = [
+                    observation.as_metadata()
+                    for observation in flow_state.observations
+                ]
+                repository_ids = {
+                    item.evidence_id for item in repository_evidence
+                }
+                flow_structural_evidence = [
+                    item
+                    for item in flow_state.evidence
+                    if item.evidence_id not in repository_ids
+                ]
+
             default_rounds = (
                 1
                 if (
@@ -376,7 +469,7 @@ class AgentController:
                     and qa_entity is not None
                 )
                 or (
-                    task_type in {TaskType.FLOW_TRACE, TaskType.CHANGE_IMPACT}
+                    task_type is TaskType.CHANGE_IMPACT
                     and self._mentioned_entity(task, repository_evidence)
                 )
                 else 0
@@ -386,7 +479,7 @@ class AgentController:
                 if self._plan.structural_expansion_rounds is None
                 else max(self._plan.structural_expansion_rounds, 0)
             )
-            structural_evidence: list[Evidence] = []
+            structural_evidence: list[Evidence] = list(flow_structural_evidence)
             for _ in range(requested_rounds):
                 if counters.structural_rounds >= MAX_STRUCTURAL_ROUNDS:
                     raise _BoundsExceeded("Structural expansion round bound exceeded")
@@ -478,15 +571,18 @@ class AgentController:
                 web_evidence,
             )
             if context.quality is EvidenceQuality.NONE:
-                limitation = "No evidence was available for repository-specific claims."
-                if web_search_error:
-                    limitation += f" External documentation search failed: {web_search_error}."
-                conservative = RepositoryAnswer(
-                    answer="Insufficient repository evidence was found.",
-                    evidence=[],
-                    confidence="low",
-                    limitations=limitation,
-                )
+                if task_type is TaskType.FLOW_TRACE:
+                    conservative = partial_flow_trace(flow_state, context.evidence)
+                else:
+                    limitation = "No evidence was available for repository-specific claims."
+                    if web_search_error:
+                        limitation += f" External documentation search failed: {web_search_error}."
+                    conservative = RepositoryAnswer(
+                        answer="Insufficient repository evidence was found.",
+                        evidence=[],
+                        confidence="low",
+                        limitations=limitation,
+                    )
                 return await self._complete_run(run, AgentRunStatus.OK, task_type, conservative, context)
 
             provider = self._providers.get(model_slot)
@@ -538,6 +634,8 @@ class AgentController:
                     f"{structured.limitations} {limitation}"
                     if structured.limitations else limitation
                 )
+            if task_type is TaskType.FLOW_TRACE:
+                structured = enforce_observed_transitions(structured, flow_state)
             if (
                 task_type in {TaskType.REPOSITORY_QA, TaskType.EXTERNAL_DOC_QUERY}
                 and citation_result.downgraded
@@ -574,7 +672,11 @@ class AgentController:
                 locals().get("repository_evidence", []) + locals().get("structural_evidence", []),
                 locals().get("web_evidence", []),
             )
-            partial = locals().get("structured") or locals().get("search_result")
+            partial = (
+                partial_flow_trace(flow_state, context.evidence)
+                if task_type is TaskType.FLOW_TRACE
+                else locals().get("structured") or locals().get("search_result")
+            )
             return await self._complete_run(
                 run, AgentRunStatus.BOUNDS_EXCEEDED, task_type, partial, context
             )

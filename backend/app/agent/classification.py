@@ -63,6 +63,7 @@ SYMBOL_STOPWORDS = {
     "they",
     "this",
     "to",
+    "trace",
     "us",
     "we",
     "what",

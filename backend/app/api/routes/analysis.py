@@ -20,7 +20,7 @@ from app.models.agent_run import AgentRunStatus
 from app.models.repository import Repository
 from app.models.session import Session
 from app.models.user import User
-from app.schemas.responses import RepositoryAnswer
+from app.schemas.responses import FlowTraceResponse, RepositoryAnswer
 from app.tools.registry import ToolRegistry
 
 router = APIRouter(prefix="/repositories", tags=["analysis"])
@@ -34,6 +34,16 @@ class AskRepositoryRequest(BaseModel):
 class AskRepositoryResponse(BaseModel):
     agent_run_id: uuid.UUID
     answer: RepositoryAnswer
+
+
+class FlowTraceRequest(BaseModel):
+    question: str = Field(min_length=1)
+    model_slot: Literal["A", "B"]
+
+
+class FlowTraceApiResponse(BaseModel):
+    agent_run_id: uuid.UUID
+    trace: FlowTraceResponse
 
 
 def get_analysis_providers(
@@ -149,3 +159,70 @@ async def ask_repository(
         )
     answer = RepositoryAnswer.model_validate(result.result)
     return AskRepositoryResponse(agent_run_id=result.agent_run_id, answer=answer)
+
+
+@router.post(
+    "/{repository_id}/flow-trace",
+    response_model=FlowTraceApiResponse,
+)
+async def flow_trace_repository(
+    repository_id: uuid.UUID,
+    request: FlowTraceRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    repository: Annotated[Repository, Depends(get_repository_or_404)],
+    providers: Annotated[
+        dict[Literal["A", "B"], LLMProvider],
+        Depends(get_analysis_providers),
+    ],
+    tool_registry: Annotated[ToolRegistry, Depends(get_analysis_tool_registry)],
+) -> FlowTraceApiResponse:
+    del repository
+    if request.model_slot not in providers:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Model slot {request.model_slot} is not configured",
+        )
+
+    conversation = Session(user_id=current_user.id, repository_id=repository_id)
+    db.add(conversation)
+    await db.flush()
+    try:
+        result = await AgentController(
+            db,
+            providers,
+            tool_registry=tool_registry,
+            user_id=current_user.id,
+        ).run(
+            request.question,
+            request.model_slot,
+            repository_id,
+            conversation.id,
+        )
+    except AgentProviderError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "message": "The selected model request failed",
+                "agent_run_id": str(exc.run_id),
+            },
+        ) from exc
+
+    if result.task_type is not TaskType.FLOW_TRACE:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "The flow-trace endpoint requires a flow-tracing question",
+                "agent_run_id": str(result.agent_run_id),
+            },
+        )
+    if result.status is AgentRunStatus.INVALID_OUTPUT:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "The model flow trace failed validation",
+                "agent_run_id": str(result.agent_run_id),
+            },
+        )
+    trace = FlowTraceResponse.model_validate(result.result)
+    return FlowTraceApiResponse(agent_run_id=result.agent_run_id, trace=trace)

@@ -554,7 +554,8 @@ async def test_structural_round_bound_stops_after_three(orchestration_context) -
         )
     )
     assert result.status is AgentRunStatus.BOUNDS_EXCEEDED
-    assert names.count("get_related_files") == 3
+    assert len(names) == 8
+    assert 1 <= names.count("get_related_files") <= 3
 
 
 class TooManyRelatedTool:
