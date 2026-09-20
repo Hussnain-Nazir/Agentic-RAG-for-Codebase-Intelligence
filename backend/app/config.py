@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -20,11 +21,17 @@ class Settings(BaseSettings):
     model_a_base_url: str | None = None
     model_a_api_key: str | None = None
     model_a_timeout: int = 60
+    model_a_structured_output_mode: Literal[
+        "json_schema", "json_object", "prompt_only"
+    ] = "json_schema"
 
     model_b_name: str | None = None
     model_b_base_url: str | None = None
     model_b_api_key: str | None = None
     model_b_timeout: int = 60
+    model_b_structured_output_mode: Literal[
+        "json_schema", "json_object", "prompt_only"
+    ] = "json_schema"
 
     embedding_model_name: str = "BAAI/bge-small-en-v1.5"
 

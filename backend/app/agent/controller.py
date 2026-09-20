@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.classification import (
     TaskType,
     classify_task,
+    extract_explicit_symbols,
     extract_file_path,
     extract_reference_symbol,
     extract_symbol,
@@ -57,6 +58,11 @@ REPOSITORY_QA_PROMPT_PATH = (
     Path(__file__).parent / "prompts" / "v1" / "repository_qa.md"
 )
 PROMPT_MESSAGE_SPLIT = "<!-- MESSAGE_SPLIT -->"
+REPOSITORY_QA_SCHEMA_INSTRUCTIONS = (
+    '{"answer":"string","evidence":"array of Evidence objects copied exactly '
+    'from EvidenceContext.evidence","confidence":"high|medium|low",'
+    '"limitations":"string|null"}'
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +87,15 @@ class _Counters:
 
 class _BoundsExceeded(RuntimeError):
     pass
+
+
+_FALLBACK_TO_REPOSITORY_QA = object()
+
+
+class AgentProviderError(RuntimeError):
+    def __init__(self, run_id: uuid.UUID) -> None:
+        super().__init__("Selected model request failed")
+        self.run_id = run_id
 
 
 @lru_cache(maxsize=1)
@@ -225,7 +240,7 @@ class AgentController:
                 .replace("{{UNTRUSTED_EVIDENCE}}", context.model_dump_json())
                 .replace(
                     "{{RESPONSE_SCHEMA}}",
-                    json.dumps(RepositoryAnswer.model_json_schema(), sort_keys=True),
+                    REPOSITORY_QA_SCHEMA_INSTRUCTIONS,
                 )
             )
             system_content, user_content = rendered.split(PROMPT_MESSAGE_SPLIT, 1)
@@ -287,8 +302,13 @@ class AgentController:
         counters = _Counters()
 
         try:
-            direct = await self._run_direct(task, task_type, repository_id, run, counters, ctx)
-            if direct is not None:
+            direct = await self._run_direct(
+                task, task_type, repository_id, run, counters, ctx
+            )
+            if direct is _FALLBACK_TO_REPOSITORY_QA:
+                task_type = TaskType.REPOSITORY_QA
+                run.task_type = task_type.value
+            elif direct is not None:
                 return direct
 
             memory_result = await self._execute_tool(
@@ -337,10 +357,33 @@ class AgentController:
                     item for item in getattr(extra, "root", []) if item.evidence_id not in existing
                 )
 
+            qa_entity: str | None = None
+            if task_type is TaskType.REPOSITORY_QA:
+                for candidate in extract_explicit_symbols(task):
+                    symbol_result = await self._execute_tool(
+                        run,
+                        counters,
+                        "find_symbol",
+                        FindSymbolInput(
+                            repository_id=repository_id,
+                            symbol_name=candidate,
+                        ),
+                        ctx,
+                    )
+                    if getattr(symbol_result, "root", []):
+                        qa_entity = candidate
+                        break
+
             default_rounds = (
                 1
-                if task_type in {TaskType.FLOW_TRACE, TaskType.CHANGE_IMPACT}
-                and self._mentioned_entity(task, repository_evidence)
+                if (
+                    task_type is TaskType.REPOSITORY_QA
+                    and qa_entity is not None
+                )
+                or (
+                    task_type in {TaskType.FLOW_TRACE, TaskType.CHANGE_IMPACT}
+                    and self._mentioned_entity(task, repository_evidence)
+                )
                 else 0
             )
             requested_rounds = (
@@ -352,7 +395,7 @@ class AgentController:
             for _ in range(requested_rounds):
                 if counters.structural_rounds >= MAX_STRUCTURAL_ROUNDS:
                     raise _BoundsExceeded("Structural expansion round bound exceeded")
-                entity = self._mentioned_entity(task, repository_evidence)
+                entity = qa_entity or self._mentioned_entity(task, repository_evidence)
                 if entity is None:
                     break
                 counters.structural_rounds += 1
@@ -439,7 +482,7 @@ class AgentController:
                 [*repository_evidence, *structural_evidence],
                 web_evidence,
             )
-            if not context.evidence:
+            if context.quality is EvidenceQuality.NONE:
                 limitation = "No evidence was available for repository-specific claims."
                 if web_search_error:
                     limitation += f" External documentation search failed: {web_search_error}."
@@ -469,6 +512,12 @@ class AgentController:
                     timeout_s=self._timeout_s,
                 )
             except Exception as model_error:
+                safe_detail = getattr(model_error, "safe_message", None)
+                safe_error = f"{type(model_error).__name__}: " + (
+                    str(safe_detail)
+                    if safe_detail
+                    else "selected model request failed"
+                )
                 await self._hooks.model_execution(
                     run.id,
                     model_slot,
@@ -476,9 +525,9 @@ class AgentController:
                     max(1, int((time.perf_counter() - model_started) * 1000)),
                     None,
                     "NOT_VALIDATED",
-                    f"{type(model_error).__name__}: selected model request failed",
+                    safe_error,
                 )
-                raise
+                raise AgentProviderError(run.id) from model_error
             structured = await self._validate_or_repair(
                 run, counters, model_slot, provider, model_result, schema, task_type, context
             )
@@ -538,7 +587,7 @@ class AgentController:
         run: AgentRun,
         counters: _Counters,
         ctx: ExecutionContext,
-    ) -> AgentExecutionResult | None:
+    ) -> AgentExecutionResult | object | None:
         if task_type is TaskType.DIRECT_FILE_OP:
             tool = self._registry.get("read_file")
             result = await self._execute_tool(
@@ -567,6 +616,8 @@ class AgentController:
                 ),
                 ctx,
             )
+            if not getattr(result, "root", []):
+                return _FALLBACK_TO_REPOSITORY_QA
         else:
             return None
         return await self._complete_run(run, AgentRunStatus.OK, task_type, result)

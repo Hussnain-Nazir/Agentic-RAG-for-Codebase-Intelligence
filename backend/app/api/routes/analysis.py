@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.classification import TaskType
-from app.agent.controller import AgentController
+from app.agent.controller import AgentController, AgentProviderError
 from app.api.deps import get_repository_or_404
 from app.api.routes.repositories import get_embedding_provider
 from app.auth.dependencies import get_current_user
@@ -90,17 +90,26 @@ async def ask_repository(
     conversation = Session(user_id=current_user.id, repository_id=repository_id)
     db.add(conversation)
     await db.flush()
-    result = await AgentController(
-        db,
-        providers,
-        tool_registry=tool_registry,
-        user_id=current_user.id,
-    ).run(
-        request.question,
-        request.model_slot,
-        repository_id,
-        conversation.id,
-    )
+    try:
+        result = await AgentController(
+            db,
+            providers,
+            tool_registry=tool_registry,
+            user_id=current_user.id,
+        ).run(
+            request.question,
+            request.model_slot,
+            repository_id,
+            conversation.id,
+        )
+    except AgentProviderError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "message": "The selected model request failed",
+                "agent_run_id": str(exc.run_id),
+            },
+        ) from exc
 
     if result.task_type is not TaskType.REPOSITORY_QA:
         raise HTTPException(

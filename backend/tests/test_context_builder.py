@@ -2,6 +2,9 @@ import hashlib
 import uuid
 from types import SimpleNamespace
 
+import pytest
+
+from app.evidence.builder import build_evidence
 from app.evidence.context_builder import MAX_CONTEXT_TOKENS, ContextBuilder
 from app.evidence.models import (
     ContextTask,
@@ -9,6 +12,10 @@ from app.evidence.models import (
     EvidenceQuality,
     RepositoryMemoryContextItem,
     WebEvidenceItem,
+)
+from app.evidence.quality import (
+    MIN_SEMANTIC_EVIDENCE_SCORE,
+    classify_evidence_quality,
 )
 from app.models import CodeChunk, CodeChunkType
 from app.retrieval.models import RankedChunk
@@ -24,6 +31,8 @@ def make_candidate(
     symbol_name: str | None = None,
     metadata: dict | None = None,
     signal: str = "hybrid",
+    contributing_signals: tuple[str, ...] | None = None,
+    raw_signal_scores: dict[str, float] | None = None,
     relationship_metadata: dict | None = None,
 ) -> RankedChunk:
     path = file_path or f"src/file_{number:02}.py"
@@ -50,8 +59,8 @@ def make_candidate(
         raw_score=score,
         signal=signal,
         final_score=score,
-        raw_signal_scores={"semantic": score},
-        contributing_signals=("semantic",),
+        raw_signal_scores=raw_signal_scores or {"semantic": score},
+        contributing_signals=contributing_signals or ("semantic",),
         relationship_metadata=relationship_metadata or {},
     )
 
@@ -234,3 +243,51 @@ def test_structural_relationship_metadata_is_preserved() -> None:
         "related_to": "callee",
         "kind": "caller",
     }
+
+
+def test_evidence_quality_rejects_low_semantic_only_matches() -> None:
+    evidence = build_evidence(
+        [
+            make_candidate(
+                1,
+                score=MIN_SEMANTIC_EVIDENCE_SCORE - 0.01,
+                content="unrelated",
+                signal="semantic",
+            )
+        ]
+    )
+
+    assert classify_evidence_quality(evidence) is EvidenceQuality.NONE
+
+
+@pytest.mark.parametrize("signal", ["lexical", "symbol"])
+def test_evidence_quality_accepts_explicit_nonsemantic_signal(signal: str) -> None:
+    evidence = build_evidence(
+        [
+            make_candidate(
+                1,
+                score=0.1,
+                content="matching",
+                signal=signal,
+                contributing_signals=(signal,),
+                raw_signal_scores={signal: 0.1},
+            )
+        ]
+    )
+
+    assert classify_evidence_quality(evidence) is EvidenceQuality.INCOMPLETE
+
+
+def test_evidence_quality_accepts_high_semantic_only_match() -> None:
+    evidence = build_evidence(
+        [
+            make_candidate(
+                1,
+                score=MIN_SEMANTIC_EVIDENCE_SCORE + 0.01,
+                content="semantic",
+                signal="semantic",
+            )
+        ]
+    )
+
+    assert classify_evidence_quality(evidence) is EvidenceQuality.INCOMPLETE

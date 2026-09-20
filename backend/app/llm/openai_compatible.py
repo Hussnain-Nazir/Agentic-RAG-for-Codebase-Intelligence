@@ -7,6 +7,12 @@ from pydantic import BaseModel
 from app.llm.base import LLMResult, Message
 
 
+class LLMProviderRequestError(RuntimeError):
+    def __init__(self, safe_message: str) -> None:
+        super().__init__(safe_message)
+        self.safe_message = safe_message
+
+
 def _strict_json_schema(value: Any) -> Any:
     """Return a strict transport schema without changing local Pydantic models."""
     if isinstance(value, dict):
@@ -91,7 +97,12 @@ class OpenAICompatibleProvider:
                 },
                 json=payload,
             )
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise LLMProviderRequestError(
+                    self._safe_provider_error(response)
+                ) from exc
         latency_ms = round((perf_counter() - started_at) * 1000)
 
         raw_response = response.json()
@@ -114,3 +125,17 @@ class OpenAICompatibleProvider:
         if not isinstance(content, str):
             raise ValueError("Model response content must be text")
         return content
+
+    def _safe_provider_error(self, response: httpx.Response) -> str:
+        try:
+            payload = response.json()
+            error = payload.get("error") or {}
+            message = str(error.get("message") or payload.get("message") or "")
+        except (ValueError, TypeError, AttributeError):
+            message = ""
+        if not message:
+            message = f"Provider returned HTTP {response.status_code}"
+        for sensitive in (self._api_key, self._base_url):
+            if sensitive:
+                message = message.replace(sensitive, "[REDACTED]")
+        return message[:500]

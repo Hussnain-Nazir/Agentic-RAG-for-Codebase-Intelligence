@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from app.agent.classification import TaskType, classify_task
-from app.agent.controller import AgentController, ExecutionPlan
+from app.agent.controller import AgentController, AgentProviderError, ExecutionPlan
 from app.api.routes.repositories import _persist_repository
 from app.config import Settings
 from app.db.base import Base
@@ -259,6 +259,11 @@ async def orchestration_context():
         ("create_access_token", TaskType.SYMBOL_LOOKUP),
         ("Find UserService", TaskType.SYMBOL_LOOKUP),
         ("Where is create_access_token referenced?", TaskType.REFERENCE_LOOKUP),
+        ("Where is create_access_token used?", TaskType.REFERENCE_LOOKUP),
+        (
+            "Where is the JWT secret loaded, and where is it used?",
+            TaskType.REPOSITORY_QA,
+        ),
         ("How does authentication work?", TaskType.REPOSITORY_QA),
         ("Explain the architecture", TaskType.ARCHITECTURE_EXPLANATION),
         ("Trace login from form to token", TaskType.FLOW_TRACE),
@@ -357,6 +362,44 @@ async def test_repository_qa_calls_one_model_and_persists_trace(
     assert len(executions) == 1
     assert executions[0].validation_status == "VALID"
     assert result.evidence_context.evidence
+
+
+@pytest.mark.asyncio
+async def test_empty_reference_lookup_falls_through_to_repository_qa(
+    orchestration_context,
+) -> None:
+    session, user, repository, _, conversation, registry_factory = orchestration_context
+    provider = DynamicMockProvider()
+    controller = AgentController(
+        session,
+        {"A": provider},
+        tool_registry=registry_factory(),
+        user_id=user.id,
+    )
+
+    result = await controller.run(
+        "Where is missing_symbol used?",
+        "A",
+        repository.id,
+        conversation.id,
+    )
+
+    names = list(
+        await session.scalars(
+            select(ToolCall.tool_name)
+            .where(ToolCall.agent_run_id == result.agent_run_id)
+            .order_by(ToolCall.sequence)
+        )
+    )
+    assert result.task_type is TaskType.REPOSITORY_QA
+    assert result.status is AgentRunStatus.OK
+    assert names == [
+        "find_references",
+        "retrieve_memory",
+        "search_codebase",
+        "find_symbol",
+    ]
+    assert provider.calls == 1
 
 
 @pytest.mark.asyncio
@@ -714,7 +757,7 @@ async def test_selected_model_failure_is_traced_without_fallback(
         user_id=user.id,
     )
 
-    with pytest.raises(RuntimeError, match="selected model failed"):
+    with pytest.raises(AgentProviderError, match="Selected model request failed"):
         await controller.run(
             "How does authentication work?", "A", repository.id, conversation.id
         )

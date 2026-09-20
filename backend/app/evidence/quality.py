@@ -7,6 +7,10 @@ ROUTE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 STRONG_SCORE_THRESHOLD = 0.65
+# Calibration on mini_fastapi produced legitimate maxima >= 0.765312 and
+# absent-topic maxima <= 0.617336. This boundary leaves more than 0.07
+# cosine-similarity margin on each side.
+MIN_SEMANTIC_EVIDENCE_SCORE = 0.69
 
 
 def _route_paths(item: Evidence) -> set[str]:
@@ -39,8 +43,34 @@ def _has_conflict(evidence: list[Evidence]) -> bool:
     )
 
 
+def _signals(item: Evidence) -> set[str]:
+    signals = item.retrieval_metadata.get("signals")
+    if isinstance(signals, list):
+        return {str(signal) for signal in signals}
+    signal = item.retrieval_metadata.get("signal")
+    return {str(signal)} if signal else set()
+
+
+def _raw_semantic_score(item: Evidence) -> float:
+    raw_scores = item.retrieval_metadata.get("raw_signal_scores")
+    if isinstance(raw_scores, dict) and "semantic" in raw_scores:
+        return float(raw_scores["semantic"] or 0.0)
+    if "semantic" in _signals(item):
+        return float(item.retrieval_metadata.get("score", 0.0) or 0.0)
+    return 0.0
+
+
 def classify_evidence_quality(evidence: list[Evidence]) -> EvidenceQuality:
     if not evidence:
+        return EvidenceQuality.NONE
+    has_lexical_or_symbol = any(
+        _signals(item).intersection({"lexical", "symbol"}) for item in evidence
+    )
+    max_semantic_score = max(_raw_semantic_score(item) for item in evidence)
+    if (
+        not has_lexical_or_symbol
+        and max_semantic_score < MIN_SEMANTIC_EVIDENCE_SCORE
+    ):
         return EvidenceQuality.NONE
     if _has_conflict(evidence):
         return EvidenceQuality.CONFLICTING

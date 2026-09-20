@@ -20,11 +20,14 @@ STOPWORDS = {
     "at",
     "be",
     "by",
+    "configuration",
+    "configured",
     "does",
     "for",
     "from",
     "how",
     "in",
+    "implemented",
     "is",
     "it",
     "of",
@@ -41,6 +44,8 @@ STOPWORDS = {
     "who",
     "why",
     "with",
+    "work",
+    "works",
 }
 
 

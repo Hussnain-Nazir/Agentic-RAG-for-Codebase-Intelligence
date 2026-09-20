@@ -57,8 +57,12 @@ def _durable_source_chunk_ids(evidence: Sequence[Evidence]) -> list[uuid.UUID]:
     durable: list[uuid.UUID] = []
     seen: set[uuid.UUID] = set()
     for item in evidence:
-        raw_ids = item.retrieval_metadata.get("source_chunk_ids") or []
-        source_ids = [uuid.UUID(str(value)) for value in raw_ids] if raw_ids else [item.evidence_id]
+        raw_source_ids = item.retrieval_metadata.get("source_chunk_ids") or []
+        source_ids = (
+            [uuid.UUID(str(value)) for value in raw_source_ids]
+            if raw_source_ids
+            else [item.evidence_id]
+        )
         for source_id in source_ids:
             if source_id not in seen:
                 seen.add(source_id)

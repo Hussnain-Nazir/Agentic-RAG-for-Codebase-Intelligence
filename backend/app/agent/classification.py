@@ -34,6 +34,72 @@ REFERENCE_PATTERNS = (
         re.IGNORECASE,
     ),
 )
+SYMBOL_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "does",
+    "for",
+    "from",
+    "he",
+    "her",
+    "hers",
+    "him",
+    "his",
+    "it",
+    "its",
+    "how",
+    "in",
+    "me",
+    "mine",
+    "our",
+    "ours",
+    "she",
+    "the",
+    "their",
+    "theirs",
+    "them",
+    "they",
+    "this",
+    "to",
+    "us",
+    "we",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "with",
+    "you",
+    "your",
+    "yours",
+}
+
+
+def is_identifier_shaped_symbol(value: str, source_text: str = "") -> bool:
+    if not BARE_SYMBOL_PATTERN.fullmatch(value) or value.lower() in SYMBOL_STOPWORDS:
+        return False
+    quoted = re.search(rf"[`'\"]{re.escape(value)}[`'\"]", source_text)
+    snake_case = "_" in value
+    pascal_case = value[:1].isupper() and not value.isupper()
+    camel_case = value[:1].islower() and any(character.isupper() for character in value[1:])
+    return bool(quoted or snake_case or pascal_case or camel_case)
+
+
+def extract_explicit_symbols(value: str) -> list[str]:
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for match in re.finditer(r"[A-Za-z_][A-Za-z0-9_]*", value):
+        candidate = match.group(0)
+        if (
+            candidate not in seen
+            and is_identifier_shaped_symbol(candidate, value)
+        ):
+            seen.add(candidate)
+            symbols.append(candidate)
+    return symbols
 
 
 def extract_file_path(value: str) -> str | None:
@@ -45,7 +111,9 @@ def extract_reference_symbol(value: str) -> str | None:
     for pattern in REFERENCE_PATTERNS:
         match = pattern.search(value)
         if match:
-            return match.group("symbol")
+            symbol = match.group("symbol")
+            if is_identifier_shaped_symbol(symbol, value):
+                return symbol
     return None
 
 

@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import event
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -390,6 +390,59 @@ async def test_automatic_write_only_fires_for_high_confidence_code_evidence() ->
     assert len(writer.calls) == 1
     assert writer.calls[0]["args"][4] is RepositoryMemorySource.AUTO
     assert writer.calls[0]["args"][3]
+
+
+@pytest.mark.asyncio
+async def test_automatic_memory_uses_durable_chunks_and_invalidates_stale(
+    session_factory,
+) -> None:
+    async with session_factory() as session:
+        _, repository, index = await make_repository(session)
+        first = await add_chunk(session, repository, index, "auth.py", "auth")
+        second = await add_chunk(session, repository, index, "routes.py", "routes")
+        merged_evidence = Evidence(
+            evidence_id=uuid.uuid4(),
+            repository_id=repository.id,
+            repository_index_id=index.id,
+            source_type="CODE",
+            file_path="auth.py",
+            symbol="login",
+            start_line=1,
+            end_line=1,
+            content_excerpt="auth routes",
+            relationship_metadata={},
+            retrieval_metadata={
+                "score": 0.9,
+                "signal": "hybrid",
+                "source_chunk_ids": [str(first.id), str(second.id)],
+            },
+            external_source_metadata=None,
+        )
+        service = MemoryService(session)
+
+        memory = await maybe_write_automatic_repository_memory(
+            service,
+            repository_id=repository.id,
+            task_type="REPOSITORY_QA",
+            confidence="high",
+            content="Authentication uses the route layer.",
+            evidence=[merged_evidence],
+            repository_index_version=index.version,
+        )
+
+        stored_ids = {uuid.UUID(value) for value in memory.evidence_ids}
+        resolved_ids = set(
+            await session.scalars(
+                select(CodeChunk.id).where(CodeChunk.id.in_(stored_ids))
+            )
+        )
+        assert stored_ids == {first.id, second.id}
+        assert resolved_ids == stored_ids
+
+        invalidated = await service.invalidate_stale(repository.id, ["auth.py"])
+
+        assert invalidated == 1
+        assert memory.is_stale is True
 
 
 @pytest.mark.asyncio

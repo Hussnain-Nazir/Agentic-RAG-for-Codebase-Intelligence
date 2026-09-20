@@ -15,6 +15,7 @@ def get_model_a(settings: Settings | None = None) -> OpenAICompatibleProvider:
         base_url=resolved.model_a_base_url,
         api_key=resolved.model_a_api_key,
         timeout_s=resolved.model_a_timeout,
+        structured_output_mode=resolved.model_a_structured_output_mode,
     )
 
 
@@ -31,4 +32,5 @@ def get_model_b(settings: Settings | None = None) -> OpenAICompatibleProvider:
         base_url=resolved.model_b_base_url,
         api_key=resolved.model_b_api_key,
         timeout_s=resolved.model_b_timeout,
+        structured_output_mode=resolved.model_b_structured_output_mode,
     )
