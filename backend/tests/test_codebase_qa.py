@@ -175,8 +175,6 @@ def _grounded_provider(call_counts: dict[str, int]) -> MockProvider:
         assert combined.index("[TRUSTED APPLICATION METADATA]") < combined.index(
             "[UNTRUSTED REPOSITORY EVIDENCE]"
         )
-        assert "array of Evidence objects copied exactly" in combined
-        assert '"$defs"' not in combined
         context = _context_from_messages(messages)
         assert context["quality"] != "NONE"
         evidence = context["evidence"][:2]

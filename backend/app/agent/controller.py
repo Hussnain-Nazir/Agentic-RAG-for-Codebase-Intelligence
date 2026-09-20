@@ -58,11 +58,6 @@ REPOSITORY_QA_PROMPT_PATH = (
     Path(__file__).parent / "prompts" / "v1" / "repository_qa.md"
 )
 PROMPT_MESSAGE_SPLIT = "<!-- MESSAGE_SPLIT -->"
-REPOSITORY_QA_SCHEMA_INSTRUCTIONS = (
-    '{"answer":"string","evidence":"array of Evidence objects copied exactly '
-    'from EvidenceContext.evidence","confidence":"high|medium|low",'
-    '"limitations":"string|null"}'
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,7 +235,7 @@ class AgentController:
                 .replace("{{UNTRUSTED_EVIDENCE}}", context.model_dump_json())
                 .replace(
                     "{{RESPONSE_SCHEMA}}",
-                    REPOSITORY_QA_SCHEMA_INSTRUCTIONS,
+                    json.dumps(RepositoryAnswer.model_json_schema(), sort_keys=True),
                 )
             )
             system_content, user_content = rendered.split(PROMPT_MESSAGE_SPLIT, 1)
