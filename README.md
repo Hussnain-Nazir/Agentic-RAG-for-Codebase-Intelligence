@@ -4,6 +4,8 @@ Prism is an agentic RAG platform for understanding, navigating, tracing, and ana
 
 Phase 17 replaces the scaffold with Prism's single bounded AgentController. It performs deterministic task classification, zero-model direct routing, hook-wrapped tool execution, repository and session authorization, memory retrieval, evidence-context construction, conditional external search, selected-slot model invocation, one bounded repair, citation validation, eligible memory writes, and complete trace persistence. Feature-specific flow-trace and change-impact prompts remain assigned to Phases 18-20.
 
+Phase 18 completes the backend Codebase Q&A vertical slice. Repository questions use a versioned, injection-aware runtime prompt, the selected model slot, schema and citation validation, and the authenticated `POST /repositories/{id}/ask` endpoint. Requests with no repository evidence return 422 without a model call, and answers whose citations are all invalid are downgraded and rejected as ungrounded.
+
 ## Local setup
 
 Prerequisites: Python 3.11 or newer, Node.js 20 or newer, and Docker with Docker Compose.
@@ -28,4 +30,4 @@ For direct development, install `backend/requirements.txt` and run `uvicorn app.
 
 Installation state is short-lived, single-use, and bound to the authenticated Prism user who requested the install URL. The callback verifies through a GitHub user access token that the installation is accessible to the GitHub user before persisting it. User and installation tokens are not stored. Do not place the private key, client secret, installation tokens, or user tokens in the frontend, repository, logs, or model context.
 
-Status: Phase 17 complete
+Status: Phase 18 complete

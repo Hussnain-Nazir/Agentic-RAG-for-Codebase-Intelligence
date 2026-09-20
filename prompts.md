@@ -984,3 +984,45 @@
 **Resulting module/commit:** `backend/app/agent/classification.py`, `backend/app/agent/controller.py`, `backend/app/evidence/context_builder.py`, `backend/app/evidence/builder.py`, and `backend/tests/test_agent_orchestration.py`.
 
 **Test result:** All 139 backend tests passed, including 22 Phase 17 classification, orchestration, trace, failure, direct-route, conditional-web, repair, and hard-bound tests. The frontend Vitest suite passed one test. Bound tests separately verified eight tool iterations, three structural rounds, 15 structural chunks, two web searches, one normal model call, and one repair attempt.
+
+### 2026-09-20 - Phase 18 Codebase Q&A
+
+**Prompt:**
+
+> Read PRISM_SPEC.md sections 23.A (Codebase Q&A), 30.0 (Flagship Feature
+> Success Criteria - Codebase Q&A row), and 32.1 (runtime prompt requirements)
+> before starting. Inspect backend/app/agent/controller.py from Phase 17 and
+> backend/app/schemas/responses.py from Phase 16.
+>
+> This is Phase 18 of Prism. Implement:
+>
+> 1. backend/app/agent/prompts/v1/repository_qa.md: the Codebase Q&A prompt
+>    template, structured per PRISM_SPEC.md section 29's untrusted-content
+>    framing (system instructions / user task / trusted metadata / untrusted
+>    evidence, clearly delimited), instructing the model to answer only from
+>    supplied evidence, cite it, and state insufficient evidence rather than
+>    fabricate.
+> 2. Wire task_type=REPOSITORY_QA through AgentController.run to use this
+>    template and produce a RepositoryAnswer.
+> 3. backend/app/api/routes/analysis.py: POST /repositories/{id}/ask
+>    accepting {question, model_slot}, requiring authentication and
+>    repository ownership, returning {agent_run_id, answer: RepositoryAnswer}.
+>    Return 422 with a clear message when evidence quality is NONE without
+>    invoking the model.
+> 4. Add deterministic tests for grounded fixture evidence, the model-free
+>    insufficient-evidence path, rejection of fabricated citations, and
+>    persisted AgentRun, ToolCall, and ModelExecution traces.
+>
+> Flow tracing, change impact, the frontend, and the full benchmark harness
+> remain out of scope. Append the development log and update README to Phase
+> 18 only after all tests pass.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added the versioned Repository Q&A runtime prompt, controller prompt selection, authenticated Q&A API route, selected-slot provider and tool-registry dependencies, explicit no-evidence handling, rejection of answers whose citations are all invalid, and end-to-end fixture tests with persisted trace verification.
+
+**Modified/rejected:** Preserved the Phase 16 downgrade-and-remove citation behavior, then marked a Q&A run `INVALID_OUTPUT` only when citation validation removed every cited evidence item. The API maps that case to 422 so a fully ungrounded claim is not returned as a successful answer. The route creates a repository-scoped session because the specified request contract contains only `question` and `model_slot`. Flow tracing, change impact, frontend work, and benchmark evaluation were not implemented.
+
+**Resulting module/commit:** `backend/app/agent/prompts/v1/repository_qa.md`, `backend/app/agent/controller.py`, `backend/app/api/routes/analysis.py`, `backend/app/main.py`, `backend/tests/test_codebase_qa.py`, `README.md`, and `prompts.md`.
+
+**Test result:** All 142 backend tests passed, including three Phase 18 tests. The existing frontend Vitest test passed after restoring dependencies from the committed lockfile. Python bytecode compilation for `backend/app` passed.

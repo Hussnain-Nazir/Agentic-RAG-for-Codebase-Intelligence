@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.routes.analysis import router as analysis_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.github import close_github_clients, router as github_router
 from app.api.routes.models import router as models_router
@@ -22,6 +23,7 @@ def create_app() -> FastAPI:
             await close_github_clients()
 
     app = FastAPI(title="Prism", lifespan=lifespan)
+    app.include_router(analysis_router)
     app.include_router(auth_router)
     app.include_router(github_router)
     app.include_router(models_router)

@@ -4,6 +4,8 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel
@@ -51,6 +53,10 @@ MAX_STRUCTURAL_CHUNKS = 15
 MAX_WEB_SEARCHES = 2
 MAX_MODEL_CALLS = 1
 MAX_REPAIR_ATTEMPTS = 1
+REPOSITORY_QA_PROMPT_PATH = (
+    Path(__file__).parent / "prompts" / "v1" / "repository_qa.md"
+)
+PROMPT_MESSAGE_SPLIT = "<!-- MESSAGE_SPLIT -->"
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +81,11 @@ class _Counters:
 
 class _BoundsExceeded(RuntimeError):
     pass
+
+
+@lru_cache(maxsize=1)
+def _repository_qa_template() -> str:
+    return REPOSITORY_QA_PROMPT_PATH.read_text(encoding="utf-8")
 
 
 class AgentExecutionResult(BaseModel):
@@ -203,6 +214,25 @@ class AgentController:
         context: EvidenceContext,
         trusted_metadata: dict[str, Any],
     ) -> list[Message]:
+        if task_type is TaskType.REPOSITORY_QA:
+            rendered = (
+                _repository_qa_template()
+                .replace("{{USER_TASK}}", task)
+                .replace(
+                    "{{TRUSTED_METADATA}}",
+                    json.dumps(trusted_metadata, sort_keys=True),
+                )
+                .replace("{{UNTRUSTED_EVIDENCE}}", context.model_dump_json())
+                .replace(
+                    "{{RESPONSE_SCHEMA}}",
+                    json.dumps(RepositoryAnswer.model_json_schema(), sort_keys=True),
+                )
+            )
+            system_content, user_content = rendered.split(PROMPT_MESSAGE_SPLIT, 1)
+            return [
+                Message(role="system", content=system_content.strip()),
+                Message(role="user", content=user_content.strip()),
+            ]
         return [
             Message(
                 role="system",
@@ -456,12 +486,25 @@ class AgentController:
                 return await self._complete_run(
                     run, AgentRunStatus.INVALID_OUTPUT, task_type, None, context
                 )
-            structured = validate_citations(structured, context).response
+            citation_result = validate_citations(structured, context)
+            structured = citation_result.response
             if web_search_error and isinstance(structured, RepositoryAnswer):
                 limitation = f"External documentation search failed: {web_search_error}."
                 structured.limitations = (
                     f"{structured.limitations} {limitation}"
                     if structured.limitations else limitation
+                )
+            if (
+                task_type is TaskType.REPOSITORY_QA
+                and citation_result.downgraded
+                and not structured.evidence
+            ):
+                return await self._complete_run(
+                    run,
+                    AgentRunStatus.INVALID_OUTPUT,
+                    task_type,
+                    structured,
+                    context,
                 )
             if requested_model_calls > MAX_MODEL_CALLS:
                 return await self._complete_run(
