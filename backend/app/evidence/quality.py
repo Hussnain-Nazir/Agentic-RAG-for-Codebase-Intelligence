@@ -1,16 +1,18 @@
 import re
+import math
 
 from app.evidence.models import Evidence, EvidenceQuality
+from app.retrieval.lexical_search import distinctive_terms
 
 ROUTE_PATTERN = re.compile(
     r"(?:get|post|put|patch|delete)\s*\(\s*['\"]([^'\"]+)['\"]",
     re.IGNORECASE,
 )
 STRONG_SCORE_THRESHOLD = 0.65
-# Calibration on mini_fastapi produced legitimate maxima >= 0.765312 and
-# absent-topic maxima <= 0.617336. This boundary leaves more than 0.07
-# cosine-similarity margin on each side.
-MIN_SEMANTIC_EVIDENCE_SCORE = 0.69
+# Calibration on mini_fastapi produced an absent email maximum of 0.712626.
+# Legitimate lower-scoring paraphrases carry sufficient distinctive lexical
+# coverage, so semantic-only evidence must clear this boundary.
+MIN_SEMANTIC_EVIDENCE_SCORE = 0.73
 
 
 def _route_paths(item: Evidence) -> set[str]:
@@ -60,12 +62,46 @@ def _raw_semantic_score(item: Evidence) -> float:
     return 0.0
 
 
-def classify_evidence_quality(evidence: list[Evidence]) -> EvidenceQuality:
+def _has_exact_symbol_match(evidence: list[Evidence]) -> bool:
+    return any(
+        contained.get("match_type")
+        in {"exact_case_sensitive", "exact_case_insensitive"}
+        for item in evidence
+        for contained in item.relationship_metadata.get("contained_symbols", [])
+    )
+
+
+def _has_distinctive_lexical_coverage(
+    evidence: list[Evidence],
+    query: str | None,
+) -> bool:
+    if not query:
+        return any("lexical" in _signals(item) for item in evidence)
+    terms = set(distinctive_terms(query))
+    if not terms:
+        return False
+    matched = {
+        str(term)
+        for item in evidence
+        for term in item.relationship_metadata.get("lexical_matched_terms", [])
+        if str(term) in terms
+    }
+    required = 1 if len(terms) == 1 else max(2, math.ceil(len(terms) / 2))
+    return len(matched) >= required
+
+
+def classify_evidence_quality(
+    evidence: list[Evidence],
+    query: str | None = None,
+) -> EvidenceQuality:
     if not evidence:
         return EvidenceQuality.NONE
-    has_lexical_or_symbol = any(
-        _signals(item).intersection({"lexical", "symbol"}) for item in evidence
+    has_symbol = _has_exact_symbol_match(evidence) or (
+        query is None and any("symbol" in _signals(item) for item in evidence)
     )
+    has_lexical_or_symbol = _has_distinctive_lexical_coverage(
+        evidence, query
+    ) or has_symbol
     max_semantic_score = max(_raw_semantic_score(item) for item in evidence)
     if (
         not has_lexical_or_symbol

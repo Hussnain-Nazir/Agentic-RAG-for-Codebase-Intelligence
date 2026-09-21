@@ -16,9 +16,9 @@ class Evidence(BaseModel):
     start_line: int | None
     end_line: int | None
     content_excerpt: str
-    relationship_metadata: dict[str, Any]
-    retrieval_metadata: dict[str, Any]
-    external_source_metadata: dict[str, Any] | None
+    relationship_metadata: dict[str, Any] = Field(default_factory=dict)
+    retrieval_metadata: dict[str, Any] = Field(default_factory=dict)
+    external_source_metadata: dict[str, Any] | None = None
 
 
 class EvidenceQuality(str, Enum):

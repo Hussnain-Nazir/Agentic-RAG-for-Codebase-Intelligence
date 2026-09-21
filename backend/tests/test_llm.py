@@ -168,6 +168,18 @@ def test_openai_compatible_provider_uses_mock_transport() -> None:
     }
 
 
+def test_strict_transport_schema_excludes_application_owned_evidence_metadata() -> None:
+    from app.schemas.responses import FlowTraceResponse
+
+    schema = _strict_json_schema(FlowTraceResponse.model_json_schema())
+    evidence = schema["$defs"]["Evidence"]
+
+    assert "relationship_metadata" not in evidence["properties"]
+    assert "retrieval_metadata" not in evidence["properties"]
+    assert "external_source_metadata" not in evidence["properties"]
+    assert "relationship_metadata" not in evidence["required"]
+
+
 def test_openai_compatible_provider_sanitizes_provider_error_details() -> None:
     secret = "test-provider-secret"
     base_url = "https://models.test.invalid/v1"

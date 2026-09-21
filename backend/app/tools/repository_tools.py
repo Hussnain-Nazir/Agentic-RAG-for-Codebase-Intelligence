@@ -13,7 +13,7 @@ from app.embeddings.local_provider import LocalEmbeddingProvider
 from app.evidence.builder import build_evidence
 from app.memory.service import MemoryService
 from app.models.code_chunk import CodeChunk
-from app.models.code_relationship import CodeRelationship
+from app.models.code_relationship import CodeRelationship, CodeRelationshipKind
 from app.models.code_symbol import CodeSymbol
 from app.models.finding import Finding, FindingType
 from app.models.repository_file import RepositoryFile, RepositoryFileStatus
@@ -279,8 +279,89 @@ class GetRelatedFilesTool:
             return EvidenceList([])
         seed_ids = {item.chunk.id for item in seeds}
         expanded = await expand_structurally(seeds, session=self._session)
-        related = [item for item in expanded if item.chunk.id not in seed_ids]
-        return EvidenceList(build_evidence(related))
+        related = [
+            item for item in expanded
+            if request.include_seed or item.chunk.id not in seed_ids
+        ]
+        evidence = build_evidence(related)
+        if chunk_id is None:
+            source_symbols = list(
+                await self._session.scalars(
+                    select(CodeSymbol).where(
+                        CodeSymbol.repository_index_id == index.id,
+                        func.lower(CodeSymbol.name)
+                        == request.symbol_name_or_chunk_id.lower(),
+                    )
+                )
+            )
+            if source_symbols:
+                relationships = list(
+                    await self._session.scalars(
+                        select(CodeRelationship).where(
+                            CodeRelationship.repository_index_id == index.id,
+                            CodeRelationship.from_symbol_id.in_(
+                                [item.id for item in source_symbols]
+                            ),
+                            CodeRelationship.kind.in_(
+                                [
+                                    CodeRelationshipKind.CALLS,
+                                    CodeRelationshipKind.API_CALL,
+                                ]
+                            ),
+                        )
+                    )
+                )
+                symbols_by_id = {
+                    item.id: item
+                    for item in list(
+                        await self._session.scalars(
+                            select(CodeSymbol).where(
+                                CodeSymbol.repository_index_id == index.id
+                            )
+                        )
+                    )
+                }
+                files_by_id = {
+                    item.id: item.path
+                    for item in list(
+                        await self._session.scalars(
+                            select(RepositoryFile).where(
+                                RepositoryFile.repository_index_id == index.id
+                            )
+                        )
+                    )
+                }
+                edges: list[dict[str, object]] = []
+                seen_edges: set[tuple[uuid.UUID, uuid.UUID, str]] = set()
+                for relationship in relationships:
+                    target = (
+                        symbols_by_id.get(relationship.to_symbol_id)
+                        if relationship.to_symbol_id
+                        else None
+                    )
+                    source = symbols_by_id.get(relationship.from_symbol_id)
+                    if source is None or target is None:
+                        continue
+                    key = (source.id, target.id, relationship.kind.value)
+                    if key in seen_edges:
+                        continue
+                    seen_edges.add(key)
+                    edges.append(
+                        {
+                            "source_symbol": source.name,
+                            "source_file": files_by_id.get(source.file_id),
+                            "target_symbol": target.name,
+                            "target_file": files_by_id.get(target.file_id),
+                            "target_start_line": target.start_line,
+                            "target_end_line": target.end_line,
+                            "kind": relationship.kind.value,
+                            "confidence": relationship.confidence.value,
+                            "observed_by": self.name,
+                        }
+                    )
+                for item in evidence:
+                    item.relationship_metadata["flow_edges"] = edges
+        return EvidenceList(evidence)
 
 
 class InspectRepositoryTool:

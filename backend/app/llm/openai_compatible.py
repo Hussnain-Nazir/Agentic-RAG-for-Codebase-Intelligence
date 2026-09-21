@@ -23,9 +23,10 @@ def _strict_json_schema(value: Any) -> Any:
                 "retrieval_metadata",
                 "external_source_metadata",
             }
+            properties = result.get("properties", {})
             result["properties"] = {
                 key: item
-                for key, item in result.get("properties", {}).items()
+                for key, item in properties.items()
                 if key not in application_metadata
             }
             result["required"] = [

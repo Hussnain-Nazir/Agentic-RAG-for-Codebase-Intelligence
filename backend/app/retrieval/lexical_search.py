@@ -47,6 +47,22 @@ STOPWORDS = {
     "work",
     "works",
 }
+GENERIC_CONTENT_TERMS = {
+    "email",
+    "emails",
+    "explain",
+    "handling",
+    "happens",
+    "logged",
+    "logging",
+    "logs",
+    "process",
+    "processed",
+    "sent",
+    "trace",
+    "user",
+    "users",
+}
 
 
 def _tokens(value: str) -> list[str]:
@@ -74,7 +90,36 @@ def meaningful_terms(query_text: str) -> list[str]:
                 continue
             seen.add(normalized)
             terms.append(normalized)
+    words = _tokens(query_text)
+    for left, right in zip(words, words[1:]):
+        if right in {"in", "on", "up", "out"}:
+            joined = _stem_for_match(left) + right
+            if joined not in seen:
+                seen.add(joined)
+                terms.append(joined)
     return terms
+
+
+def distinctive_terms(query_text: str) -> list[str]:
+    return [
+        term
+        for term in meaningful_terms(query_text)
+        if term not in GENERIC_CONTENT_TERMS
+    ]
+
+
+def _stem_for_match(value: str) -> str:
+    for suffix in ("ing", "ed", "s"):
+        if value.endswith(suffix) and len(value) > len(suffix) + 2:
+            return value[: -len(suffix)]
+    return value
+
+
+def matched_lexical_terms(content: str, query_terms: list[str]) -> list[str]:
+    content_stems = {_stem_for_match(token) for token in _tokens(content)}
+    return [
+        term for term in query_terms if _stem_for_match(term) in content_stems
+    ]
 
 
 def _fallback_score(content: str, query_terms: list[str], query_text: str) -> float:
@@ -109,6 +154,7 @@ async def lexical_search(
     if top_k <= 0 or not query_text:
         return []
 
+    terms = meaningful_terms(query_text)
     dialect = session.bind.dialect.name if session.bind is not None else ""
     if dialect == "postgresql":
         search_vector = literal_column("code_chunks.search_vector")
@@ -129,14 +175,23 @@ async def lexical_search(
             )
             rows = (await session.execute(statement)).all()
             return [
-                RankedChunk(chunk=chunk, raw_score=float(score), signal="lexical")
+                RankedChunk(
+                    chunk=chunk,
+                    raw_score=float(score),
+                    signal="lexical",
+                    relationship_metadata={
+                        "lexical_matched_terms": matched_lexical_terms(
+                            chunk.content, terms
+                        ),
+                        "lexical_query_terms": terms,
+                    },
+                )
                 for chunk, score in rows
             ]
 
         strict_results = await execute(strict_query)
         if strict_results:
             return strict_results
-        terms = meaningful_terms(query_text)
         if not terms:
             return []
         or_query = func.to_tsquery(english, " | ".join(terms))
@@ -147,7 +202,6 @@ async def lexical_search(
         CodeChunk.repository_index_id == repository_index_id,
     )
     chunks = list((await session.scalars(scoped)).all())
-    terms = meaningful_terms(query_text)
     scored = [
         (chunk, _strict_fallback_score(chunk.content, terms, query_text))
         for chunk in chunks
@@ -165,6 +219,16 @@ async def lexical_search(
         )
     )
     return [
-        RankedChunk(chunk=chunk, raw_score=score, signal="lexical")
+        RankedChunk(
+            chunk=chunk,
+            raw_score=score,
+            signal="lexical",
+            relationship_metadata={
+                "lexical_matched_terms": matched_lexical_terms(
+                    chunk.content, terms
+                ),
+                "lexical_query_terms": terms,
+            },
+        )
         for chunk, score in scored[:top_k]
     ]

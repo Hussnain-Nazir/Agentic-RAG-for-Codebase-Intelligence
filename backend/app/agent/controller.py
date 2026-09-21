@@ -449,10 +449,7 @@ class AgentController:
                     execute_flow_tool,
                     flow_state,
                 )
-                trusted_metadata["flow_observations"] = [
-                    observation.as_metadata()
-                    for observation in flow_state.observations
-                ]
+                trusted_metadata["flow_graph"] = flow_state.as_metadata()
                 repository_ids = {
                     item.evidence_id for item in repository_evidence
                 }
@@ -635,7 +632,11 @@ class AgentController:
                     if structured.limitations else limitation
                 )
             if task_type is TaskType.FLOW_TRACE:
-                structured = enforce_observed_transitions(structured, flow_state)
+                structured = enforce_observed_transitions(
+                    structured,
+                    flow_state,
+                    context.evidence,
+                )
             if (
                 task_type in {TaskType.REPOSITORY_QA, TaskType.EXTERNAL_DOC_QUERY}
                 and citation_result.downgraded

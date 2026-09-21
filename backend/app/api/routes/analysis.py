@@ -216,6 +216,17 @@ async def flow_trace_repository(
                 "agent_run_id": str(result.agent_run_id),
             },
         )
+    if (
+        result.evidence_context is None
+        or result.evidence_context.quality is EvidenceQuality.NONE
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Insufficient repository evidence was found to trace the flow",
+                "agent_run_id": str(result.agent_run_id),
+            },
+        )
     if result.status is AgentRunStatus.INVALID_OUTPUT:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

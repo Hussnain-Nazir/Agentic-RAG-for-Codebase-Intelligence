@@ -259,7 +259,7 @@ class ContextBuilder:
             task_type=task_type_value,
             repository_memory=kept_memory,
             evidence=kept,
-            quality=classify_evidence_quality(kept),
+            quality=classify_evidence_quality(kept, task_model.query),
             estimated_tokens=math.ceil(used_chars / 4),
         )
 
@@ -327,7 +327,7 @@ class ContextBuilder:
                 *(str(item.evidence_id) for item in kept),
             ]
         )
-        quality = classify_evidence_quality(kept)
+        quality = classify_evidence_quality(kept, task_model.query)
         return EvidenceContext(
             context_id=uuid.uuid5(uuid.NAMESPACE_URL, context_seed),
             repository_id=repository_id,

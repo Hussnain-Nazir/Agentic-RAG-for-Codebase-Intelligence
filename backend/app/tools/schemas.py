@@ -60,6 +60,7 @@ class CodeReferenceList(RootModel[list[CodeReference]]):
 class RelatedFilesInput(BaseModel):
     repository_id: uuid.UUID
     symbol_name_or_chunk_id: str = Field(min_length=1)
+    include_seed: bool = False
 
 
 class InspectRepositoryInput(BaseModel):
