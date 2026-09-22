@@ -20,7 +20,7 @@ from app.models.agent_run import AgentRunStatus
 from app.models.repository import Repository
 from app.models.session import Session
 from app.models.user import User
-from app.schemas.responses import FlowTraceResponse, RepositoryAnswer
+from app.schemas.responses import ChangeImpactResponse, FlowTraceResponse, RepositoryAnswer
 from app.tools.registry import ToolRegistry
 
 router = APIRouter(prefix="/repositories", tags=["analysis"])
@@ -44,6 +44,16 @@ class FlowTraceRequest(BaseModel):
 class FlowTraceApiResponse(BaseModel):
     agent_run_id: uuid.UUID
     trace: FlowTraceResponse
+
+
+class ChangeImpactRequest(BaseModel):
+    change_description: str = Field(min_length=1)
+    model_slot: Literal["A", "B"]
+
+
+class ChangeImpactApiResponse(BaseModel):
+    agent_run_id: uuid.UUID
+    impact: ChangeImpactResponse
 
 
 def get_analysis_providers(
@@ -237,3 +247,75 @@ async def flow_trace_repository(
         )
     trace = FlowTraceResponse.model_validate(result.result)
     return FlowTraceApiResponse(agent_run_id=result.agent_run_id, trace=trace)
+
+
+@router.post(
+    "/{repository_id}/change-impact",
+    response_model=ChangeImpactApiResponse,
+)
+async def change_impact_repository(
+    repository_id: uuid.UUID,
+    request: ChangeImpactRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    repository: Annotated[Repository, Depends(get_repository_or_404)],
+    providers: Annotated[
+        dict[Literal["A", "B"], LLMProvider],
+        Depends(get_analysis_providers),
+    ],
+    tool_registry: Annotated[ToolRegistry, Depends(get_analysis_tool_registry)],
+) -> ChangeImpactApiResponse:
+    del repository
+    if request.model_slot not in providers:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Model slot {request.model_slot} is not configured",
+        )
+    conversation = Session(user_id=current_user.id, repository_id=repository_id)
+    db.add(conversation)
+    await db.flush()
+    try:
+        result = await AgentController(
+            db,
+            providers,
+            tool_registry=tool_registry,
+            user_id=current_user.id,
+        ).run(
+            request.change_description,
+            request.model_slot,
+            repository_id,
+            conversation.id,
+            task_type_override=TaskType.CHANGE_IMPACT,
+        )
+    except AgentProviderError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "message": "The selected model request failed",
+                "agent_run_id": str(exc.run_id),
+            },
+        ) from exc
+    if result.status is AgentRunStatus.INVALID_OUTPUT:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "The model change impact failed validation",
+                "agent_run_id": str(result.agent_run_id),
+            },
+        )
+    if (
+        result.evidence_context is None
+        or result.evidence_context.quality is EvidenceQuality.NONE
+        or not ChangeImpactResponse.model_validate(result.result).directly_affected
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Insufficient repository evidence was found to assess the change",
+                "agent_run_id": str(result.agent_run_id),
+            },
+        )
+    return ChangeImpactApiResponse(
+        agent_run_id=result.agent_run_id,
+        impact=ChangeImpactResponse.model_validate(result.result),
+    )

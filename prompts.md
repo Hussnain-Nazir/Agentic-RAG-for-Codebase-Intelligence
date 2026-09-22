@@ -1051,3 +1051,19 @@
 **Resulting module/commit:** `backend/app/agent/prompts/v1/flow_trace.md`, `backend/app/agent/investigations/`, `backend/app/agent/controller.py`, `backend/app/api/routes/analysis.py`, `backend/tests/test_flow_trace.py`, `backend/tests/test_agent_orchestration.py`, `README.md`, and `prompts.md`.
 
 **Test result:** All 157 backend tests passed. Phase 19 tests verified an ordered observed call across fixture files, an undefined external call marked unresolved without a fabricated transition, and tool-bound exhaustion returning a valid partial FlowTraceResponse.
+
+### 2026-09-22 - Phase 20 change impact and incremental sync
+
+**Prompt:**
+
+> Read PRISM_SPEC.md sections 23.C, 30.0's Change Impact row, and 9.3. Implement a versioned change-impact prompt and bounded investigation using find_symbol, find_references, get_related_files, and search_codebase; wire ChangeImpactResponse through the controller and POST /repositories/{id}/change-impact. Implement GitHub SHA-diff synchronization into a new RepositoryIndex version with unchanged-content reuse, changed/new file processing, deleted-file removal from the new version, and changed/deleted memory invalidation. Add POST /repositories/{id}/sync with a 409 response for an active sync. Add MockProvider-backed impact tests and mocked-GitHub sync tests. Keep the frontend, narrated architecture explanation, and model comparison out of scope. Update this log and README only after all prior and new tests pass.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added a versioned change-impact prompt, an evidence-backed investigation and deterministic affected-item guard, the authenticated change-impact endpoint, GitHub SHA-based synchronization, current-version relationship remapping, unchanged memory provenance remapping, and a sync endpoint with ownership and in-progress checks.
+
+**Modified/rejected:** Kept the agent bounds and hybrid retrieval parameters unchanged. Sync reuses unchanged rows in a new index version and only parses or embeds them if the configured embedding model version changes. The endpoint performs the sync synchronously; the DB state records each indexing stage. No frontend, model comparison, or architecture-narration behavior was added.
+
+**Resulting module/commit:** `backend/app/agent/prompts/v1/change_impact.md`, `backend/app/agent/investigations/change_impact.py`, `backend/app/agent/controller.py`, `backend/app/api/routes/analysis.py`, `backend/app/ingestion/sync.py`, `backend/app/api/routes/repositories.py`, `backend/app/sources/github.py`, `backend/tests/test_change_impact.py`, and `backend/tests/test_incremental_sync.py`. Changes were left uncommitted.
+
+**Test result:** All 189 backend tests and the existing frontend Vitest test passed. The frontend test required `npm ci --offline` because the tracked `node_modules` contents did not match the lockfile; tracked dependency files were restored after testing to leave unrelated files unchanged. The new tests verify direct versus indirect impact with citations, rejection of fabricated affected items, no-model insufficient-evidence behavior, zero parse/blob/embedding work for an unchanged sync, content-hash embedding reuse, changed/new/deleted index contents, memory staleness and unchanged-memory provenance, sync 409, and ownership enforcement. Docker rebuilt the backend, and `/health` returned HTTP 200.

@@ -22,6 +22,11 @@ from app.ingestion.pipeline import discover_and_normalize, exceeds_mvp_file_targ
 from app.ingestion.parsing_stage import parse_repository_files
 from app.ingestion.chunking_stage import chunk_repository_files
 from app.ingestion.security import ZipSafetyError, safe_extract
+from app.ingestion.sync import (
+    SyncInProgressError,
+    SyncUnavailableError,
+    synchronize_repository,
+)
 from app.github.client import GitHubClient
 from app.github.errors import (
     GitHubAccessLost,
@@ -44,6 +49,7 @@ from app.models.repository import (
 from app.models.repository_file import RepositoryFile, RepositoryFileStatus
 from app.models.repository_index import RepositoryIndex, RepositoryIndexState
 from app.models.user import User
+from app.api.deps import get_repository_or_404
 from app.sources.upload import UploadedRepositorySource
 from app.sources.github import GitHubRepositorySource
 
@@ -61,6 +67,11 @@ class GitHubRepositoryImport(BaseModel):
     source_type: Literal["github"]
     github_repo_id: int
     branch: str | None = None
+
+
+class RepositorySyncResponse(BaseModel):
+    index_id: uuid.UUID
+    state: RepositoryIndexState
 
 
 @lru_cache
@@ -383,3 +394,30 @@ async def import_repository(
             embedding_provider,
             settings,
         )
+
+
+@router.post("/{repository_id}/sync", response_model=RepositorySyncResponse)
+async def sync_repository(
+    repository_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    repository: Annotated[Repository, Depends(get_repository_or_404)],
+    github_client: Annotated[GitHubClient, Depends(get_github_client)],
+    embedding_provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> RepositorySyncResponse:
+    del repository
+    try:
+        index = await synchronize_repository(
+            repository_id,
+            session=db,
+            github_client=github_client,
+            embedding_provider=embedding_provider,
+            settings=settings,
+        )
+    except SyncInProgressError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SyncUnavailableError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except GitHubApiError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return RepositorySyncResponse(index_id=index.id, state=index.state)

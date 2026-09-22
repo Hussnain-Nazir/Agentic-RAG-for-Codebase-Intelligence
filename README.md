@@ -8,6 +8,8 @@ Phase 18 completes the backend Codebase Q&A vertical slice. Repository questions
 
 Phase 19 completes the backend multi-file flow-tracing slice. A bounded feature investigation follows exact symbols through stored references and related evidence, records every tool observation, preserves unresolved transitions rather than fabricating links, and serves validated results through `POST /repositories/{id}/flow-trace`.
 
+Phase 20 adds backend change-impact analysis and GitHub incremental synchronization. Change-impact requests use bounded symbol, reference, related-file, and hybrid-search tools to separate evidenced definitions from likely downstream consumers at `POST /repositories/{id}/change-impact`. `POST /repositories/{id}/sync` creates a new index version, copies unchanged indexed rows without parsing or embedding them again, processes changed and new files through the shared ingestion stages, excludes deleted files from the new version, and invalidates memory tied to changed or deleted evidence.
+
 ## Local setup
 
 Prerequisites: Python 3.11 or newer, Node.js 20 or newer, and Docker with Docker Compose.
@@ -32,4 +34,4 @@ For direct development, install `backend/requirements.txt` and run `uvicorn app.
 
 Installation state is short-lived, single-use, and bound to the authenticated Prism user who requested the install URL. The callback verifies through a GitHub user access token that the installation is accessible to the GitHub user before persisting it. User and installation tokens are not stored. Do not place the private key, client secret, installation tokens, or user tokens in the frontend, repository, logs, or model context.
 
-Status: Phase 19 complete
+Status: Phase 20 complete

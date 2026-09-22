@@ -25,7 +25,9 @@ class GitHubRepositorySource:
         revision = await self.get_revision(ref)
         return await self.list_files_at_revision(ref, revision)
 
-    async def list_files_at_revision(self, ref: str, revision: str) -> list[SourceFileRef]:
+    async def list_files_at_revision(
+        self, ref: str, revision: str
+    ) -> list[SourceFileRef]:
         tree = await self._client.get_repository_tree(
             self._installation_id,
             self._repository_id,

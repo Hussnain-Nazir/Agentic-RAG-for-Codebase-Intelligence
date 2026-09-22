@@ -25,6 +25,11 @@ from app.agent.investigations.flow_trace import (
     investigate_flow_trace,
     partial_flow_trace,
 )
+from app.agent.investigations.change_impact import (
+    ChangeImpactState,
+    enforce_observed_impacts,
+    investigate_change_impact,
+)
 from app.agent.repair import attempt_repair
 from app.evidence.context_builder import ContextBuilder
 from app.evidence.models import Evidence, EvidenceContext, EvidenceQuality, WebEvidenceItem
@@ -64,6 +69,7 @@ REPOSITORY_QA_PROMPT_PATH = (
     Path(__file__).parent / "prompts" / "v1" / "repository_qa.md"
 )
 FLOW_TRACE_PROMPT_PATH = Path(__file__).parent / "prompts" / "v1" / "flow_trace.md"
+CHANGE_IMPACT_PROMPT_PATH = Path(__file__).parent / "prompts" / "v1" / "change_impact.md"
 PROMPT_MESSAGE_SPLIT = "<!-- MESSAGE_SPLIT -->"
 
 
@@ -108,6 +114,11 @@ def _repository_qa_template() -> str:
 @lru_cache(maxsize=1)
 def _flow_trace_template() -> str:
     return FLOW_TRACE_PROMPT_PATH.read_text(encoding="utf-8")
+
+
+@lru_cache(maxsize=1)
+def _change_impact_template() -> str:
+    return CHANGE_IMPACT_PROMPT_PATH.read_text(encoding="utf-8")
 
 
 class AgentExecutionResult(BaseModel):
@@ -255,6 +266,22 @@ class AgentController:
                 Message(role="system", content=system_content.strip()),
                 Message(role="user", content=user_content.strip()),
             ]
+        if task_type is TaskType.CHANGE_IMPACT:
+            rendered = (
+                _change_impact_template()
+                .replace("{{USER_TASK}}", task)
+                .replace("{{TRUSTED_METADATA}}", json.dumps(trusted_metadata, sort_keys=True))
+                .replace("{{UNTRUSTED_EVIDENCE}}", context.model_dump_json())
+                .replace(
+                    "{{RESPONSE_SCHEMA}}",
+                    json.dumps(ChangeImpactResponse.model_json_schema(), sort_keys=True),
+                )
+            )
+            system_content, user_content = rendered.split(PROMPT_MESSAGE_SPLIT, 1)
+            return [
+                Message(role="system", content=system_content.strip()),
+                Message(role="user", content=user_content.strip()),
+            ]
         if task_type is TaskType.FLOW_TRACE:
             rendered = (
                 _flow_trace_template()
@@ -301,6 +328,8 @@ class AgentController:
         model_slot: Literal["A", "B"],
         repository_id: uuid.UUID,
         session_id: uuid.UUID,
+        *,
+        task_type_override: TaskType | None = None,
     ) -> AgentExecutionResult:
         if self._user_id is None:
             raise UnauthorizedRepositoryAccessError("Authenticated user identity is required")
@@ -317,7 +346,7 @@ class AgentController:
             user_id=self._user_id,
         )
         await authorize_repository(self._session, repository_id, ctx)
-        task_type = classify_task(task)
+        task_type = task_type_override or classify_task(task)
         run = AgentRun(
             session_id=session_id,
             task_type=task_type.value,
@@ -327,6 +356,7 @@ class AgentController:
         await self._session.flush()
         counters = _Counters()
         flow_state = FlowInvestigationState()
+        impact_state = ChangeImpactState()
 
         try:
             direct = await self._run_direct(
@@ -460,15 +490,47 @@ class AgentController:
                     if item.evidence_id not in repository_ids
                 ]
 
+            if task_type is TaskType.CHANGE_IMPACT:
+                impact_state.evidence = list(repository_evidence)
+
+                async def execute_impact_tool(
+                    tool_name: str,
+                    input_model: BaseModel,
+                ) -> BaseModel:
+                    if tool_name != "get_related_files":
+                        return await self._execute_tool(
+                            run, counters, tool_name, input_model, ctx
+                        )
+                    if counters.structural_rounds >= MAX_STRUCTURAL_ROUNDS:
+                        raise _BoundsExceeded("Structural expansion round bound exceeded")
+                    if counters.structural_chunks >= MAX_STRUCTURAL_CHUNKS:
+                        raise _BoundsExceeded("Structural expansion chunk bound exceeded")
+                    counters.structural_rounds += 1
+                    result = await self._execute_tool(
+                        run, counters, tool_name, input_model, ctx
+                    )
+                    root = list(getattr(result, "root", []))
+                    remaining = MAX_STRUCTURAL_CHUNKS - counters.structural_chunks
+                    if len(root) > remaining:
+                        result = type(result)(root[:remaining])
+                        root = list(getattr(result, "root", []))
+                    counters.structural_chunks += len(root)
+                    return result
+
+                await investigate_change_impact(
+                    task, repository_id, execute_impact_tool, impact_state
+                )
+                repository_ids = {item.evidence_id for item in repository_evidence}
+                flow_structural_evidence = [
+                    item for item in impact_state.evidence
+                    if item.evidence_id not in repository_ids
+                ]
+
             default_rounds = (
                 1
                 if (
                     task_type in {TaskType.REPOSITORY_QA, TaskType.EXTERNAL_DOC_QUERY}
                     and qa_entity is not None
-                )
-                or (
-                    task_type is TaskType.CHANGE_IMPACT
-                    and self._mentioned_entity(task, repository_evidence)
                 )
                 else 0
             )
@@ -568,9 +630,27 @@ class AgentController:
                 [*repository_evidence, *structural_evidence],
                 web_evidence,
             )
-            if context.quality is EvidenceQuality.NONE:
+            if task_type is TaskType.CHANGE_IMPACT:
+                trusted_metadata["impact_graph"] = impact_state.as_metadata(
+                    {item.evidence_id for item in context.evidence}
+                )
+            if context.quality is EvidenceQuality.NONE or (
+                task_type is TaskType.CHANGE_IMPACT
+                and not any(
+                    item.evidence_id in candidate.evidence_ids
+                    for candidate in impact_state.directly_affected.values()
+                    for item in context.evidence
+                )
+            ):
                 if task_type is TaskType.FLOW_TRACE:
                     conservative = partial_flow_trace(flow_state, context.evidence)
+                elif task_type is TaskType.CHANGE_IMPACT:
+                    conservative = ChangeImpactResponse(
+                        requested_change=task,
+                        directly_affected=[],
+                        likely_indirectly_affected=[],
+                        evidence=[],
+                    )
                 else:
                     limitation = "No evidence was available for repository-specific claims."
                     if web_search_error:
@@ -638,6 +718,11 @@ class AgentController:
                     flow_state,
                     context.evidence,
                 )
+            if task_type is TaskType.CHANGE_IMPACT:
+                structured = enforce_observed_impacts(
+                    structured, impact_state, context.evidence
+                )
+                structured.requested_change = task
             if (
                 task_type in {TaskType.REPOSITORY_QA, TaskType.EXTERNAL_DOC_QUERY}
                 and citation_result.downgraded
@@ -683,6 +768,17 @@ class AgentController:
             partial = (
                 partial_flow_trace(flow_state, context.evidence)
                 if task_type is TaskType.FLOW_TRACE
+                else enforce_observed_impacts(
+                    ChangeImpactResponse(
+                        requested_change=task,
+                        directly_affected=[],
+                        likely_indirectly_affected=[],
+                        evidence=[],
+                    ),
+                    impact_state,
+                    context.evidence,
+                )
+                if task_type is TaskType.CHANGE_IMPACT
                 else locals().get("structured") or locals().get("search_result")
             )
             return await self._complete_run(
