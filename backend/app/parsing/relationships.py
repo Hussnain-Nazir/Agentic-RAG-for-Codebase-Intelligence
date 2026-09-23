@@ -6,6 +6,8 @@ from app.models.code_relationship import (
 )
 from app.parsing.base import ParsedFile
 
+MODULE_SYMBOL_NAME = "<module>"
+
 
 @dataclass(frozen=True, slots=True)
 class ExtractedRelationship:
@@ -24,9 +26,10 @@ def extract_relationships(parsed: ParsedFile) -> list[ExtractedRelationship]:
 
     for symbol in parsed.symbols:
         calls = set(symbol.metadata.get("calls", []))
+        direct_calls = set(symbol.metadata.get("direct_calls", []))
         for target in calls:
             candidates = symbols_by_name.get(target, [])
-            directly_resolved = len(candidates) == 1 and (
+            directly_resolved = target in direct_calls and len(candidates) == 1 and (
                 candidates[0].parent_symbol is None
                 or candidates[0].parent_symbol == symbol.parent_symbol
             )
@@ -80,17 +83,15 @@ def extract_relationships(parsed: ParsedFile) -> list[ExtractedRelationship]:
                 )
             )
 
-    source_symbol = next((item.name for item in parsed.symbols if item.parent_symbol is None), None)
-    if source_symbol:
-        for imported in parsed.imports:
-            for target in imported.names:
-                relationships.add(
-                    ExtractedRelationship(
-                        from_symbol=source_symbol,
-                        to_symbol=target,
-                        kind=CodeRelationshipKind.IMPORTS,
-                        confidence=CodeRelationshipConfidence.LOW,
-                    )
+    for imported in parsed.imports:
+        for target in imported.names:
+            relationships.add(
+                ExtractedRelationship(
+                    from_symbol=MODULE_SYMBOL_NAME,
+                    to_symbol=target,
+                    kind=CodeRelationshipKind.IMPORTS,
+                    confidence=CodeRelationshipConfidence.LOW,
+                )
                 )
     return sorted(
         relationships,

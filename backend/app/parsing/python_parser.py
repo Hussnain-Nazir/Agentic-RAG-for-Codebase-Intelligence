@@ -93,6 +93,7 @@ class PythonTreeSitterParser:
                         else:
                             body = actual.child_by_field_name("body")
                             calls = []
+                            direct_calls = []
                             references = []
                             if body is not None:
                                 for descendant in _walk(body):
@@ -100,9 +101,13 @@ class PythonTreeSitterParser:
                                         called = _call_name(descendant, source_bytes)
                                         if called:
                                             calls.append(called)
+                                            function = descendant.child_by_field_name("function")
+                                            if function is not None and function.type == "identifier":
+                                                direct_calls.append(called)
                                     elif descendant.type == "identifier":
                                         references.append(_text(descendant, source_bytes))
                             metadata["calls"] = sorted(set(calls))
+                            metadata["direct_calls"] = sorted(set(direct_calls))
                             metadata["references"] = sorted(set(references))
                             api_routes = [
                                 decorator

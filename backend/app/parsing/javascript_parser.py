@@ -41,6 +41,7 @@ def _callee_name(node: Node, source: bytes) -> str | None:
 
 def _function_metadata(node: Node, source: bytes) -> dict[str, object]:
     calls: set[str] = set()
+    direct_calls: set[str] = set()
     references: set[str] = set()
     api_calls: list[str] = []
     for descendant in _walk(node):
@@ -49,6 +50,8 @@ def _function_metadata(node: Node, source: bytes) -> dict[str, object]:
             if called:
                 calls.add(called)
             function = descendant.child_by_field_name("function")
+            if called and function is not None and function.type == "identifier":
+                direct_calls.add(called)
             function_text = _text(function, source) if function is not None else ""
             if function_text == "fetch" or function_text.startswith("axios."):
                 arguments = descendant.child_by_field_name("arguments")
@@ -63,6 +66,7 @@ def _function_metadata(node: Node, source: bytes) -> dict[str, object]:
             references.add(_text(descendant, source))
     return {
         "calls": sorted(calls),
+        "direct_calls": sorted(direct_calls),
         "references": sorted(references),
         "api_calls": api_calls,
     }

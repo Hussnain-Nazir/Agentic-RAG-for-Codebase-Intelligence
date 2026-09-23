@@ -23,7 +23,7 @@ from app.models import (
 )
 from app.parsing.javascript_parser import JavaScriptTreeSitterParser
 from app.parsing.python_parser import PythonTreeSitterParser
-from app.parsing.relationships import extract_relationships
+from app.parsing.relationships import MODULE_SYMBOL_NAME, extract_relationships
 from app.parsing.typescript_parser import TypeScriptTreeSitterParser
 
 FIXTURES = Path(__file__).parent / "fixtures" / "parsing"
@@ -84,11 +84,61 @@ def test_typescript_extracts_interface_type_function_and_api_call() -> None:
 
 
 @pytest.mark.parametrize(
+    ("source", "parser", "path"),
+    [
+        (
+            "def helper():\n    return 1\n\ndef run(obj):\n    return obj.helper()\n",
+            PythonTreeSitterParser(),
+            "member.py",
+        ),
+        (
+            "function helper() { return 1; }\nfunction run(obj) { return obj.helper(); }\n",
+            JavaScriptTreeSitterParser(),
+            "member.js",
+        ),
+        (
+            "function helper() { return 1; }\nfunction run(obj: any) { return obj.helper(); }\n",
+            TypeScriptTreeSitterParser(),
+            "member.ts",
+        ),
+    ],
+)
+def test_member_call_is_not_high_confidence_from_name_only(
+    source: str, parser: object, path: str
+) -> None:
+    parsed = parser.parse(source, path)
+    assert parsed.parse_ok
+    relationships = extract_relationships(parsed)
+    assert any(
+        item.from_symbol == "run"
+        and item.to_symbol == "helper"
+        and item.kind is CodeRelationshipKind.CALLS
+        and item.confidence is CodeRelationshipConfidence.LOW
+        for item in relationships
+    )
+
+
+def test_import_only_module_uses_file_level_relationship_source() -> None:
+    parsed = PythonTreeSitterParser().parse(
+        "from helpers import helper\n", "imports_only.py"
+    )
+    assert parsed.parse_ok and parsed.symbols == []
+    assert any(
+        item.from_symbol == MODULE_SYMBOL_NAME
+        and item.to_symbol == "helper"
+        and item.kind is CodeRelationshipKind.IMPORTS
+        for item in extract_relationships(parsed)
+    )
+
+
+@pytest.mark.parametrize(
     ("filename", "parser"),
     [
         ("malformed.py", PythonTreeSitterParser()),
         ("malformed.js", JavaScriptTreeSitterParser()),
+        ("malformed.jsx", JavaScriptTreeSitterParser(jsx=True)),
         ("malformed.ts", TypeScriptTreeSitterParser()),
+        ("malformed.tsx", TypeScriptTreeSitterParser(tsx=True)),
     ],
 )
 def test_malformed_files_always_return_fallback(filename: str, parser: object) -> None:
@@ -151,17 +201,35 @@ async def test_repository_parse_isolates_malformed_file_and_persists_other_symbo
             size_bytes=len(fixture_text("malformed.ts")),
             content=fixture_text("malformed.ts"),
         )
-        session.add_all([valid, malformed])
+        import_only = RepositoryFile(
+            repository_index_id=index.id,
+            path="imports_only.py",
+            language="python",
+            content_hash="c" * 64,
+            status=RepositoryFileStatus.OK,
+            size_bytes=len("from sample import helper\n"),
+            content="from sample import helper\n",
+        )
+        session.add_all([valid, malformed, import_only])
         await session.flush()
 
-        parsed = await parse_repository_files([valid, malformed])
+        parsed = await parse_repository_files([valid, malformed, import_only])
 
-        assert len(parsed) == 2
+        assert len(parsed) == 3
         assert malformed.status is RepositoryFileStatus.PARSE_FAILED
         symbols = list(await session.scalars(select(CodeSymbol)))
         assert {item.name for item in symbols} >= {"helper", "Greeter", "greet", "health"}
+        module_symbol = next(
+            item for item in symbols
+            if item.file_id == import_only.id and item.name == MODULE_SYMBOL_NAME
+        )
         relationships = list(await session.scalars(select(CodeRelationship)))
         assert relationships
+        assert any(
+            item.from_symbol_id == module_symbol.id
+            and item.kind is CodeRelationshipKind.IMPORTS
+            for item in relationships
+        )
         by_id = {item.id: item for item in symbols}
         for relationship in relationships:
             if relationship.confidence is CodeRelationshipConfidence.HIGH:

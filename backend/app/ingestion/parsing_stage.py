@@ -10,7 +10,7 @@ from app.parsing.base import ParsedFile, TreeSitterParser
 from app.parsing.fallback import fallback_parsed_file
 from app.parsing.javascript_parser import JavaScriptTreeSitterParser
 from app.parsing.python_parser import PythonTreeSitterParser
-from app.parsing.relationships import extract_relationships
+from app.parsing.relationships import MODULE_SYMBOL_NAME, extract_relationships
 from app.parsing.typescript_parser import TypeScriptTreeSitterParser
 
 
@@ -69,6 +69,17 @@ async def parse_repository_files(files: list[RepositoryFile]) -> list[ParsedFile
     for file, parsed in parsed_files:
         if not parsed.parse_ok:
             continue
+        if parsed.imports:
+            module_row = CodeSymbol(
+                repository_index_id=repository_index_id,
+                file_id=file.id,
+                name=MODULE_SYMBOL_NAME,
+                symbol_type="MODULE",
+                start_line=1,
+                end_line=max(len((file.content or "").splitlines()), 1),
+            )
+            session.add(module_row)
+            symbol_rows[(file.id, MODULE_SYMBOL_NAME)] = module_row
         for symbol in parsed.symbols:
             row = CodeSymbol(
                 repository_index_id=repository_index_id,
