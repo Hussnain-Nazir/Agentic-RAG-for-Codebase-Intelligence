@@ -7,6 +7,34 @@ from pydantic import BaseModel
 from app.llm.base import LLMResult, Message
 
 
+def _strict_json_schema(value: Any) -> Any:
+    """Return a strict transport schema without changing local Pydantic models."""
+    if isinstance(value, dict):
+        result = {key: _strict_json_schema(item) for key, item in value.items()}
+        if result.get("title") == "Evidence":
+            application_metadata = {
+                "relationship_metadata",
+                "retrieval_metadata",
+                "external_source_metadata",
+            }
+            result["properties"] = {
+                key: item
+                for key, item in result.get("properties", {}).items()
+                if key not in application_metadata
+            }
+            result["required"] = [
+                key
+                for key in result.get("required", [])
+                if key not in application_metadata
+            ]
+        if result.get("type") == "object" or "properties" in result:
+            result["additionalProperties"] = False
+        return result
+    if isinstance(value, list):
+        return [_strict_json_schema(item) for item in value]
+    return value
+
+
 class OpenAICompatibleProvider:
     def __init__(
         self,
@@ -39,11 +67,12 @@ class OpenAICompatibleProvider:
             ],
         }
         if schema is not None:
+            schema_value = _strict_json_schema(schema.model_json_schema())
             payload["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
                     "name": schema.__name__,
-                    "schema": schema.model_json_schema(),
+                    "schema": schema_value,
                     "strict": True,
                 },
             }

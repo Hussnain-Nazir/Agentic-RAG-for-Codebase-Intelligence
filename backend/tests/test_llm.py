@@ -2,11 +2,12 @@ import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator, Iterator
+from typing import Any
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -17,7 +18,7 @@ from app.db.session import get_db
 from app.llm.base import Message
 from app.llm.factory import get_model_a, get_model_b
 from app.llm.mock import MockProvider
-from app.llm.openai_compatible import OpenAICompatibleProvider
+from app.llm.openai_compatible import OpenAICompatibleProvider, _strict_json_schema
 from app.main import create_app
 from app.models.user import User
 
@@ -27,6 +28,33 @@ TEST_SECRET = "phase-three-test-secret-at-least-32-bytes"
 class StructuredAnswer(BaseModel):
     answer: str
     confidence: str
+
+
+class StructuredDetail(BaseModel):
+    message: str
+
+
+class Evidence(BaseModel):
+    evidence_id: str
+    relationship_metadata: dict[str, Any] = Field(default_factory=dict)
+    retrieval_metadata: dict[str, Any] = Field(default_factory=dict)
+    external_source_metadata: dict[str, Any] | None = None
+
+
+class NestedAnswer(BaseModel):
+    detail: StructuredDetail
+    evidence: list[Evidence]
+
+
+def test_strict_transport_schema_closes_nested_objects_and_omits_metadata_maps() -> None:
+    schema = _strict_json_schema(NestedAnswer.model_json_schema())
+
+    assert schema["additionalProperties"] is False
+    assert schema["$defs"]["StructuredDetail"]["additionalProperties"] is False
+    evidence_schema = schema["$defs"]["Evidence"]
+    assert evidence_schema["additionalProperties"] is False
+    assert set(evidence_schema["properties"]) == {"evidence_id"}
+    assert evidence_schema["required"] == ["evidence_id"]
 
 
 def test_mock_provider_returns_canned_responses_in_order() -> None:
@@ -114,7 +142,7 @@ def test_openai_compatible_provider_uses_mock_transport() -> None:
     result = asyncio.run(
         provider.complete(
             [Message(role="system", content="system instruction"), Message(role="user", content="question")],
-            StructuredAnswer,
+            NestedAnswer,
             15,
         )
     )
@@ -127,7 +155,13 @@ def test_openai_compatible_provider_uses_mock_transport() -> None:
     payload = captured_request["payload"]
     assert isinstance(payload, dict)
     assert payload["model"] == "test-model"
-    assert payload["response_format"]["json_schema"]["name"] == "StructuredAnswer"
+    transport_schema = payload["response_format"]["json_schema"]
+    assert transport_schema["name"] == "NestedAnswer"
+    assert transport_schema["schema"]["additionalProperties"] is False
+    assert transport_schema["schema"]["$defs"]["StructuredDetail"]["additionalProperties"] is False
+    assert set(transport_schema["schema"]["$defs"]["Evidence"]["properties"]) == {
+        "evidence_id"
+    }
 
 
 def test_model_factories_use_independent_slot_configuration() -> None:
