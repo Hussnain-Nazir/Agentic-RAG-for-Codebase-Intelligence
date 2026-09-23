@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from time import perf_counter
 from typing import Literal
 
 from pydantic import BaseModel, ValidationError
@@ -37,6 +38,7 @@ class AgentController:
         self._session.add(run)
         await self._session.flush()
 
+        started_at = perf_counter()
         try:
             model_result = await self._provider.complete(
                 messages=[Message(role="user", content=task)],
@@ -47,14 +49,21 @@ class AgentController:
         except ValidationError as exc:
             run.status = AgentRunStatus.INVALID_OUTPUT
             run.completed_at = datetime.now(timezone.utc)
+            elapsed_ms = max(1, int((perf_counter() - started_at) * 1000))
             await self._hooks.model_execution(
                 run_id=run.id,
                 slot=self._slot,
                 model_name=self._provider.model_name,
-                latency_ms=0,
-                tokens=None,
+                latency_ms=max(elapsed_ms, model_result.latency_ms),
+                tokens=TokenUsage(
+                    input_tokens=model_result.input_tokens,
+                    output_tokens=model_result.output_tokens,
+                ),
                 validation_status="INVALID",
-                error=str(exc),
+                error=str([
+                    (error["loc"], error["type"])
+                    for error in exc.errors(include_input=False)
+                ]),
             )
             await self._session.commit()
             raise
@@ -65,10 +74,10 @@ class AgentController:
                 run_id=run.id,
                 slot=self._slot,
                 model_name=self._provider.model_name,
-                latency_ms=0,
+                latency_ms=max(1, int((perf_counter() - started_at) * 1000)),
                 tokens=None,
                 validation_status="NOT_VALIDATED",
-                error=str(exc),
+                error=f"{type(exc).__name__}: provider request failed",
             )
             await self._session.commit()
             raise

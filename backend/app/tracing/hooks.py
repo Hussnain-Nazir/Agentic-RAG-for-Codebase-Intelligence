@@ -28,8 +28,8 @@ class TokenUsage:
 
 
 def sanitize_arguments(value: Any, key: str = "") -> Any:
-    normalized_key = key.lower()
-    if any(part in normalized_key for part in SENSITIVE_KEY_PARTS):
+    normalized_key = "".join(character for character in key.lower() if character.isalnum())
+    if any(part.replace("_", "") in normalized_key for part in SENSITIVE_KEY_PARTS):
         return REDACTED
     if isinstance(value, dict):
         return {

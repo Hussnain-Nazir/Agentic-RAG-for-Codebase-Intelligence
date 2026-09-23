@@ -2,7 +2,8 @@ import asyncio
 import uuid
 from collections.abc import AsyncIterator
 
-from pydantic import BaseModel
+import pytest
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -11,6 +12,7 @@ from app.agent.controller import AgentController
 from app.db.base import Base
 from app.evidence.models import Evidence
 from app.llm.mock import MockProvider
+from app.llm.base import LLMResult
 from app.memory.base import MemoryService
 from app.models import (
     AgentRun,
@@ -113,7 +115,12 @@ def test_hook_manager_sanitizes_credentials() -> None:
                 {
                     "query": "safe",
                     "api_key": "must-not-be-stored",
-                    "nested": {"access_token": "must-not-be-stored"},
+                    "apiKey": "must-not-be-stored",
+                    "privateKey": "must-not-be-stored",
+                    "nested": {
+                        "access_token": "must-not-be-stored",
+                        "api-key": "must-not-be-stored",
+                    },
                 },
                 ExecutionContext(),
             )
@@ -124,9 +131,72 @@ def test_hook_manager_sanitizes_credentials() -> None:
             assert call.args_sanitized == {
                 "query": "safe",
                 "api_key": "[REDACTED]",
-                "nested": {"access_token": "[REDACTED]"},
+                "apiKey": "[REDACTED]",
+                "privateKey": "[REDACTED]",
+                "nested": {
+                    "access_token": "[REDACTED]",
+                    "api-key": "[REDACTED]",
+                },
             }
             assert call.status == "OK"
+
+    asyncio.run(exercise())
+
+
+def test_provider_failure_records_elapsed_time_without_raw_error() -> None:
+    class FailingProvider:
+        model_name = "failure-test"
+
+        async def complete(self, messages, schema, timeout_s):
+            del messages, schema, timeout_s
+            await asyncio.sleep(0.02)
+            raise RuntimeError("provider included sensitive request details")
+
+    async def exercise() -> None:
+        async for session in database_session():
+            controller = AgentController(session, FailingProvider(), slot="A")
+            with pytest.raises(RuntimeError, match="provider included"):
+                await controller.run("Explain behavior")
+
+            execution = await session.scalar(select(ModelExecution))
+            assert execution is not None
+            assert execution.validation_status == "NOT_VALIDATED"
+            assert execution.latency_ms >= 10
+            assert execution.input_tokens is None
+            assert execution.output_tokens is None
+            assert execution.error == "RuntimeError: provider request failed"
+
+    asyncio.run(exercise())
+
+
+def test_invalid_model_output_retains_elapsed_time_and_token_usage() -> None:
+    class InvalidProvider:
+        model_name = "validation-test"
+
+        async def complete(self, messages, schema, timeout_s):
+            del messages, schema, timeout_s
+            await asyncio.sleep(0.02)
+            return LLMResult(
+                content='{"wrong_field": "value"}',
+                input_tokens=11,
+                output_tokens=5,
+                latency_ms=3,
+                raw_response={},
+            )
+
+    async def exercise() -> None:
+        async for session in database_session():
+            controller = AgentController(session, InvalidProvider(), slot="B")
+            with pytest.raises(ValidationError):
+                await controller.run("Explain behavior")
+
+            execution = await session.scalar(select(ModelExecution))
+            assert execution is not None
+            assert execution.validation_status == "INVALID"
+            assert execution.latency_ms >= 10
+            assert execution.input_tokens == 11
+            assert execution.output_tokens == 5
+            assert "wrong_field" not in (execution.error or "")
 
     asyncio.run(exercise())
 
