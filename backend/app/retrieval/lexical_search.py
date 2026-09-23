@@ -154,7 +154,11 @@ async def lexical_search(
             for chunk in chunks
         ]
         scored = [item for item in scored if item[1] > 0]
-    scored.sort(key=lambda item: (-item[1], item[0].file_path, item[0].start_line))
+    scored.sort(
+        key=lambda item: (
+            -item[1], item[0].file_path, item[0].start_line, str(item[0].id)
+        )
+    )
     return [
         RankedChunk(chunk=chunk, raw_score=score, signal="lexical")
         for chunk, score in scored[:top_k]

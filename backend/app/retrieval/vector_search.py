@@ -59,7 +59,7 @@ async def semantic_search(
         distance = CodeChunk.embedding.cosine_distance(query_embedding)
         statement = (
             scoped.add_columns((1.0 - distance).label("raw_score"))
-            .order_by(distance)
+            .order_by(distance, CodeChunk.id)
             .limit(top_k)
         )
         rows = (await session.execute(statement)).all()
@@ -76,7 +76,7 @@ async def semantic_search(
         )
         for chunk in candidates
     ]
-    scored.sort(key=lambda item: item[1], reverse=True)
+    scored.sort(key=lambda item: (-item[1], str(item[0].id)))
     return [
         RankedChunk(chunk=chunk, raw_score=score, signal="semantic")
         for chunk, score in scored[:top_k]

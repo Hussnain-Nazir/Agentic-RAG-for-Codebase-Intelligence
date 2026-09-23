@@ -419,6 +419,6 @@ def test_embedding_failure_marks_index_failed(
             assert index is not None
             assert index.state is RepositoryIndexState.FAILED
             assert index.failure_reason is not None
-            assert "synthetic embedding failure" in index.failure_reason
+            assert index.failure_reason == "Embedding failed: RuntimeError"
 
     asyncio.run(inspect())

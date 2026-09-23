@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
+from app.ingestion.embedding_stage import current_embedding_model_version
 from app.models import (
     CodeChunk,
     CodeChunkType,
@@ -24,12 +25,14 @@ from app.models import (
 )
 from app.retrieval.expansion import expand_structurally
 from app.retrieval.hybrid import HybridRetriever
+from app.retrieval.lexical_search import lexical_search
 from app.retrieval.models import ContainedSymbol, RankedChunk
 from app.retrieval.ranking import (
     deduplicate_by_chunk_and_overlap,
     merge_adjacent_chunks,
     merge_candidates,
 )
+from app.retrieval.vector_search import semantic_search
 
 
 def vector(first: float, second: float = 0.0) -> list[float]:
@@ -110,6 +113,56 @@ async def make_repository(session):
     session.add(repository_index)
     await session.flush()
     return repository, repository_index
+
+
+@pytest.mark.asyncio
+async def test_equal_score_candidates_have_stable_selection_before_signal_limits(
+    session_factory,
+) -> None:
+    async with session_factory() as session:
+        repository, index = await make_repository(session)
+        file = RepositoryFile(
+            repository_index_id=index.id,
+            path="equal.py",
+            language="python",
+            content_hash="a" * 64,
+            status=RepositoryFileStatus.OK,
+            size_bytes=12,
+            content="shared token",
+        )
+        session.add(file)
+        await session.flush()
+        ordered_ids = [uuid.UUID(int=number) for number in range(1, 36)]
+        for chunk_id in reversed(ordered_ids):
+            session.add(
+                CodeChunk(
+                    id=chunk_id,
+                    repository_id=repository.id,
+                    repository_index_id=index.id,
+                    file_id=file.id,
+                    file_path=file.path,
+                    language="python",
+                    chunk_type=CodeChunkType.MODULE_SECTION,
+                    start_line=1,
+                    end_line=1,
+                    content="shared token",
+                    content_hash="b" * 64,
+                    embedding=vector(1.0),
+                    embedding_model_version=current_embedding_model_version(),
+                    chunk_metadata={"source_type": "CODE"},
+                )
+            )
+        await session.flush()
+
+        for _ in range(2):
+            semantic = await semantic_search(
+                repository.id, index.id, vector(1.0), 30, session=session
+            )
+            lexical = await lexical_search(
+                repository.id, index.id, "shared token", 30, session=session
+            )
+            assert [item.chunk.id for item in semantic] == ordered_ids[:30]
+            assert [item.chunk.id for item in lexical] == ordered_ids[:30]
 
 
 async def add_symbol_chunk(

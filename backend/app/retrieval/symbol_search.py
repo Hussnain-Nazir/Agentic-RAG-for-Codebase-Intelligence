@@ -110,7 +110,7 @@ async def _candidate_symbols(
             func.lower(CodeSymbol.name) != query_text.lower(),
             similarity > FUZZY_SIMILARITY_THRESHOLD,
         )
-        .order_by(similarity.desc(), CodeSymbol.name)
+        .order_by(similarity.desc(), CodeSymbol.name, CodeSymbol.id)
         .limit(FUZZY_SYMBOL_LIMIT)
     )
     fuzzy_symbols = list((await session.execute(fuzzy_statement)).all())
