@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 from collections.abc import AsyncIterator, Iterator
 import pytest
 from fastapi import Depends
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import StaticPool
 
 from app.auth.dependencies import get_current_user
+from app.auth.security import create_access_token, decode_access_token
 from app.config import Settings, get_settings
 from app.db.base import Base
 from app.db.session import get_db
@@ -157,3 +159,30 @@ def test_protected_route_accepts_valid_token(
 
     assert response.status_code == 200
     assert response.json() == {"user_id": user_id}
+
+
+@pytest.mark.parametrize("secret", [None, "", "  ", "changeme", " CHANGEME "])
+def test_startup_rejects_unset_or_placeholder_jwt_secret(secret: str | None) -> None:
+    app = create_app()
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        _env_file=None,
+        database_url="sqlite+aiosqlite://",
+        jwt_secret=secret,
+    )
+
+    with pytest.raises(ValueError, match="JWT_SECRET must be configured"):
+        with TestClient(app):
+            pass
+
+
+def test_jwt_secret_has_no_usable_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("JWT_SECRET", raising=False)
+    assert Settings(_env_file=None).jwt_secret is None
+
+
+@pytest.mark.parametrize("secret", [None, "", "changeme"])
+def test_token_operations_reject_unusable_jwt_secret(secret: str | None) -> None:
+    with pytest.raises(ValueError, match="JWT_SECRET must be configured"):
+        create_access_token(uuid.uuid4(), secret)
+    with pytest.raises(ValueError, match="JWT_SECRET must be configured"):
+        decode_access_token("invalid", secret)

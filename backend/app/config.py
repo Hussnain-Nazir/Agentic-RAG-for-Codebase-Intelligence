@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     """Server-side configuration loaded from environment variables."""
 
     database_url: str = "postgresql+asyncpg://prism:prism@postgres:5432/prism"
-    jwt_secret: str = "changeme"
+    jwt_secret: str | None = None
 
     github_app_id: str | None = None
     github_app_private_key_path: str = "/run/secrets/github_app_key.pem"
