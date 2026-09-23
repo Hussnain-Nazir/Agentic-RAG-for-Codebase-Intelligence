@@ -1,5 +1,6 @@
 import hashlib
 import uuid
+from types import SimpleNamespace
 
 from app.evidence.context_builder import MAX_CONTEXT_TOKENS, ContextBuilder
 from app.evidence.models import (
@@ -11,6 +12,7 @@ from app.evidence.models import (
 )
 from app.models import CodeChunk, CodeChunkType
 from app.retrieval.models import RankedChunk
+import app.evidence as evidence_package
 
 
 def make_candidate(
@@ -121,6 +123,27 @@ def test_no_matches_produces_none_quality_and_empty_evidence() -> None:
     assert context.quality is EvidenceQuality.NONE
     assert context.evidence == []
     assert context.estimated_tokens == 0
+
+
+def test_task_keywords_accept_one_string_and_ignore_non_iterable_values() -> None:
+    builder = ContextBuilder()
+    from_mapping = builder.build(
+        {"query": "Explain authentication", "extracted_keywords": "auth"},
+        "REPOSITORY_QA", [], [], [],
+    )
+    from_object = builder.build(
+        SimpleNamespace(query="Explain authentication", extracted_keywords=17),
+        "REPOSITORY_QA", [], [], [],
+    )
+
+    assert from_mapping.task.extracted_keywords == ["auth"]
+    assert from_object.task.extracted_keywords == []
+
+
+def test_evidence_package_exports_have_one_complete_public_list() -> None:
+    assert len(evidence_package.__all__) == len(set(evidence_package.__all__))
+    assert "Evidence" in evidence_package.__all__
+    assert "ContextBuilder" in evidence_package.__all__
 
 
 def test_duplicate_route_paths_in_different_files_are_conflicting() -> None:

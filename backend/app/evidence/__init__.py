@@ -1,6 +1,3 @@
-from app.evidence.models import Evidence
-
-__all__ = ["Evidence"]
 from app.evidence.builder import build_evidence
 from app.evidence.context_builder import ContextBuilder
 from app.evidence.models import Evidence, EvidenceContext, EvidenceQuality

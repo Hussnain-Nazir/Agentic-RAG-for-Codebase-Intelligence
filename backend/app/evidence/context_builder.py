@@ -24,6 +24,17 @@ MAX_EVIDENCE_ITEMS = 12
 KEYWORD_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
+def _keyword_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value] if value else []
+    if value is None:
+        return []
+    try:
+        return [item for item in value if isinstance(item, str)]
+    except TypeError:
+        return []
+
+
 def _task_model(task: Any) -> ContextTask:
     if isinstance(task, ContextTask):
         return task
@@ -32,14 +43,14 @@ def _task_model(task: Any) -> ContextTask:
     if isinstance(task, dict):
         query = str(task.get("query") or task.get("question") or "")
         keywords = task.get("extracted_keywords") or task.get("keywords") or []
-        return ContextTask(query=query, extracted_keywords=list(keywords))
+        return ContextTask(query=query, extracted_keywords=_keyword_list(keywords))
     query = str(getattr(task, "query", getattr(task, "question", task)))
     keywords = getattr(
         task,
         "extracted_keywords",
         getattr(task, "keywords", []),
     )
-    return ContextTask(query=query, extracted_keywords=list(keywords or []))
+    return ContextTask(query=query, extracted_keywords=_keyword_list(keywords))
 
 
 def _task_type_value(task_type: Any) -> str:
