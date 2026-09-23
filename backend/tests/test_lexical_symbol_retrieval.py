@@ -1,7 +1,11 @@
 import hashlib
+import os
+import uuid
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -21,6 +25,7 @@ from app.models import (
 from app.retrieval.lexical_search import lexical_search
 from app.retrieval.models import RankedChunk
 from app.retrieval.symbol_search import symbol_search
+import app.retrieval as retrieval
 
 
 @pytest_asyncio.fixture
@@ -101,6 +106,13 @@ def make_chunk(repository, repository_index, repository_file, content: str, symb
         end_line=5,
     )
     return chunk, symbol_row
+
+
+def test_retrieval_package_exports_semantic_search_and_ranked_chunk() -> None:
+    assert "semantic_search" in retrieval.__all__
+    assert "RankedChunk" in retrieval.__all__
+    assert retrieval.semantic_search is not None
+    assert retrieval.RankedChunk is RankedChunk
 
 
 @pytest.mark.asyncio
@@ -195,6 +207,69 @@ async def test_symbol_search_finds_trigram_close_misspelling(session_factory) ->
         assert results
         assert results[0].chunk.id == chunk.id
         assert 0.0 < results[0].raw_score < 1.0
+
+
+@pytest.mark.asyncio
+async def test_symbol_search_ignores_unrelated_fuzzy_name(session_factory) -> None:
+    async with session_factory() as session:
+        repository, index, file = await make_repository(
+            session, "symbol-unrelated@example.com"
+        )
+        chunk, symbol = make_chunk(
+            repository, index, file, "def authenticate_user(): pass", "authenticate_user"
+        )
+        session.add_all([chunk, symbol])
+        await session.flush()
+
+        results = await symbol_search(
+            repository.id, index.id, "quantum_orbit", session=session
+        )
+        assert results == []
+
+
+@pytest.mark.asyncio
+async def test_postgres_symbol_search_excludes_unrelated_fuzzy_names() -> None:
+    database_url = os.getenv("PRISM_TEST_POSTGRES_URL")
+    if not database_url:
+        pytest.skip("A dedicated PostgreSQL test URL is not configured")
+    if "test" not in (make_url(database_url).database or "").lower():
+        pytest.fail("The PostgreSQL integration test requires a test database")
+
+    schema = f"prism_symbol_test_{uuid.uuid4().hex}"
+    admin_engine = create_async_engine(database_url)
+    engine = None
+    try:
+        async with admin_engine.begin() as connection:
+            await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await connection.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+            await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+        engine = create_async_engine(
+            database_url,
+            connect_args={"server_settings": {"search_path": f"{schema},public"}},
+        )
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with factory() as session:
+            repository, index, file = await make_repository(
+                session, "pg-symbol@example.com"
+            )
+            chunk, symbol = make_chunk(
+                repository, index, file, "def authenticate_user(): pass", "authenticate_user"
+            )
+            session.add_all([chunk, symbol])
+            await session.commit()
+
+            results = await symbol_search(
+                repository.id, index.id, "quantum_orbit", session=session
+            )
+            assert results == []
+    finally:
+        if engine is not None:
+            await engine.dispose()
+        async with admin_engine.begin() as connection:
+            await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        await admin_engine.dispose()
 
 
 @pytest.mark.asyncio

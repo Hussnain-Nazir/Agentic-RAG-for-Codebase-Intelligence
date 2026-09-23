@@ -10,6 +10,7 @@ from app.models.repository_index import RepositoryIndex
 from app.retrieval.models import RankedChunk
 
 FUZZY_SYMBOL_LIMIT = 10
+FUZZY_SIMILARITY_THRESHOLD = 0.3
 
 
 def _trigrams(value: str) -> Counter[str]:
@@ -58,7 +59,9 @@ async def _candidate_symbols(
             key=lambda item: item[1],
             reverse=True,
         )
-        fuzzy = [item for item in fuzzy if item[1] > 0][:FUZZY_SYMBOL_LIMIT]
+        fuzzy = [
+            item for item in fuzzy if item[1] > FUZZY_SIMILARITY_THRESHOLD
+        ][:FUZZY_SYMBOL_LIMIT]
         return [
             *((symbol, 1.0) for symbol in case_sensitive),
             *((symbol, 0.95) for symbol in case_insensitive),
@@ -86,6 +89,7 @@ async def _candidate_symbols(
             RepositoryIndex.repository_id == repository_id,
             CodeSymbol.repository_index_id == repository_index_id,
             func.lower(CodeSymbol.name) != query_text.lower(),
+            similarity > FUZZY_SIMILARITY_THRESHOLD,
         )
         .order_by(similarity.desc(), CodeSymbol.name)
         .limit(FUZZY_SYMBOL_LIMIT)

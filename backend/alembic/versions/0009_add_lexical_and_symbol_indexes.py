@@ -1,4 +1,4 @@
-"""Add lexical and trigram search indexes.
+"""Add lexical search index.
 
 Revision ID: 0009
 Revises: 0008
@@ -14,7 +14,6 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
     op.execute(
         """
         ALTER TABLE code_chunks
@@ -28,13 +27,8 @@ def upgrade() -> None:
         "CREATE INDEX ix_code_chunks_search_vector "
         "ON code_chunks USING gin (search_vector)"
     )
-    op.execute(
-        "CREATE INDEX ix_code_symbols_name_trgm "
-        "ON code_symbols USING gin (name gin_trgm_ops)"
-    )
 
 
 def downgrade() -> None:
-    op.execute("DROP INDEX IF EXISTS ix_code_symbols_name_trgm")
     op.execute("DROP INDEX IF EXISTS ix_code_chunks_search_vector")
     op.execute("ALTER TABLE code_chunks DROP COLUMN search_vector")
