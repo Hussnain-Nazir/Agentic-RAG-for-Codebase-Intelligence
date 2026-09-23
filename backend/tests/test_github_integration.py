@@ -32,12 +32,14 @@ from app.models import (
     GitHubInstallation,
     GitHubInstallationStatus,
     Repository,
+    RepositoryAccessStatus,
     RepositoryFile,
     RepositoryFileStatus,
     RepositoryIndex,
     RepositorySourceType,
     User,
 )
+from app.sources.github import GitHubRepositorySource
 
 TEST_SECRET = "phase-six-test-secret-at-least-32-bytes"
 FUTURE_EXPIRY = "2099-01-01T00:00:00Z"
@@ -116,6 +118,119 @@ def test_repository_listing_follows_link_header_pagination() -> None:
 
     assert [repository["id"] for repository in repositories] == [1, 2]
     assert len(requested_pages) == 2
+
+
+def test_pagination_rejects_external_link_before_sending_installation_credential() -> None:
+    requested_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_paths.append(request.url.path)
+        if request.url.path.endswith("/access_tokens"):
+            return token_response(request)
+        return httpx.Response(
+            200,
+            json={"repositories": [{"id": 1}]},
+            headers={"Link": '<https://other.example.invalid/collect>; rel="next"'},
+            request=request,
+        )
+
+    with pytest.raises(GitHubApiError, match="outside the API origin"):
+        asyncio.run(github_client(handler).list_repositories(77))
+    assert requested_paths == [
+        "/app/installations/77/access_tokens",
+        "/installation/repositories",
+    ]
+
+
+def test_app_installation_listing_flattens_enveloped_pages() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("page") == "2":
+            return httpx.Response(200, json={"installations": [{"id": 2}]}, request=request)
+        return httpx.Response(
+            200,
+            json={"installations": [{"id": 1}]},
+            headers={"Link": '<https://api.github.test/app/installations?page=2>; rel="next"'},
+            request=request,
+        )
+
+    assert asyncio.run(github_client(handler).list_installations()) == [
+        {"id": 1}, {"id": 2}
+    ]
+
+
+def test_installation_repository_listing_maps_non_rate_limited_403_to_access_lost() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/access_tokens"):
+            return token_response(request)
+        return httpx.Response(403, request=request)
+
+    with pytest.raises(GitHubAccessLost):
+        asyncio.run(github_client(handler).list_repositories(77))
+
+
+def test_github_client_reuses_and_closes_one_http_client() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"id": 1}, request=request)
+
+    async def exercise() -> None:
+        client = github_client(handler)
+        await client.get_app()
+        http_client = client._http_client
+        await client.get_app()
+        assert client._http_client is http_client
+        await client.aclose()
+        assert http_client is not None and http_client.is_closed
+
+    asyncio.run(exercise())
+
+
+def test_app_shutdown_closes_cached_github_clients(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.api.routes.github as github_routes
+
+    monkeypatch.setattr(github_routes, "_CLIENTS", {})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"id": 1}, request=request)
+
+    github = github_client(handler)
+    asyncio.run(github.get_app())
+    http_client = github._http_client
+    github_routes._CLIENTS[("test", "test", "test")] = github
+    app = create_app()
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        _env_file=None, jwt_secret=TEST_SECRET
+    )
+    with TestClient(app):
+        pass
+
+    assert http_client is not None and http_client.is_closed
+    assert github_routes._CLIENTS == {}
+
+
+def test_branch_and_content_paths_are_percent_encoded() -> None:
+    paths: list[bytes] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/access_tokens"):
+            return token_response(request)
+        paths.append(request.url.raw_path)
+        if "/branches/" in request.url.path:
+            return httpx.Response(200, json={"commit": {"sha": "revision"}}, request=request)
+        return httpx.Response(
+            200,
+            json={"encoding": "base64", "content": base64.b64encode(b"ok").decode()},
+            request=request,
+        )
+
+    async def exercise() -> None:
+        client = github_client(handler)
+        await client.get_branch_revision(77, 1001, "feature/#? %")
+        await client.get_file_content(77, 1001, "dir/a #?%.py", "main")
+        await client.aclose()
+
+    asyncio.run(exercise())
+    assert b"feature%2F%23%3F%20%25" in paths[0]
+    assert b"dir/a%20%23%3F%25.py" in paths[1]
 
 
 def test_installation_revoked_error() -> None:
@@ -201,6 +316,35 @@ def test_blob_content_decodes_github_base64_with_line_breaks() -> None:
 
     content = asyncio.run(github_client(handler).get_blob_content(77, 1001, "sha"))
     assert content == expected
+
+
+def test_blob_prefix_uses_raw_response_and_returns_bounded_bytes() -> None:
+    payload = b"a" * 100_000
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/access_tokens"):
+            return token_response(request)
+        assert request.headers["Accept"] == "application/vnd.github.raw+json"
+        return httpx.Response(200, content=payload, request=request)
+
+    async def exercise() -> bytes:
+        client = github_client(handler)
+        prefix = await client.get_blob_prefix(77, 1001, "sha", 8192)
+        await client.aclose()
+        return prefix
+
+    prefix = asyncio.run(exercise())
+    assert prefix == payload[:8192]
+
+
+def test_blob_prefix_rejects_redirect_without_treating_it_as_file_content() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/access_tokens"):
+            return token_response(request)
+        return httpx.Response(302, headers={"Location": "https://other.example.invalid/blob"}, request=request)
+
+    with pytest.raises(GitHubApiError, match="unexpected status"):
+        asyncio.run(github_client(handler).get_blob_prefix(77, 1001, "sha", 8192))
 
 
 def test_user_authorization_exchanges_code_and_lists_installations() -> None:
@@ -299,6 +443,54 @@ class FakeGitHubClient:
     ) -> bytes:
         assert (installation_id, repository_id) == (77, 1001)
         return self.blobs[blob_sha]
+
+
+def test_github_source_pins_revision_and_applies_root_gitignore() -> None:
+    class ChangingClient:
+        def __init__(self) -> None:
+            self.revision_calls = 0
+            self.tree_revisions: list[str] = []
+            self.blob_calls: list[str] = []
+            self.blobs = {
+                "ignore-sha": b"ignored.py\n",
+                "kept-sha": b"value = 1\n",
+                "excluded-sha": b"ignored = 1\n",
+            }
+
+        async def get_branch_revision(self, installation_id, repository_id, ref):
+            del installation_id, repository_id, ref
+            self.revision_calls += 1
+            return f"revision-{self.revision_calls}"
+
+        async def get_repository_tree(self, installation_id, repository_id, revision):
+            del installation_id, repository_id
+            self.tree_revisions.append(revision)
+            return [
+                {"path": ".gitignore", "type": "blob", "sha": "ignore-sha", "size": 11},
+                {"path": "ignored.py", "type": "blob", "sha": "excluded-sha", "size": 12},
+                {"path": "kept.py", "type": "blob", "sha": "kept-sha", "size": 10},
+                {"path": ".env", "type": "blob", "sha": "secret-sha", "size": 5},
+            ]
+
+        async def get_blob_content(self, installation_id, repository_id, blob_sha):
+            del installation_id, repository_id
+            self.blob_calls.append(blob_sha)
+            return self.blobs[blob_sha]
+
+    async def exercise() -> None:
+        client = ChangingClient()
+        source = GitHubRepositorySource(client, 77, 1001)
+        revision = await source.get_revision("main")
+        files = await source.list_files("main")
+        assert revision == "revision-1"
+        assert client.revision_calls == 1
+        assert client.tree_revisions == [revision]
+        assert [item.path for item in files] == [".gitignore", "kept.py"]
+        assert await source.get_file_prefix("main", "kept.py", 4) == b"valu"
+        assert await source.get_file_content("main", "kept.py") == b"value = 1\n"
+        assert client.blob_calls == ["ignore-sha", "kept-sha"]
+
+    asyncio.run(exercise())
 
 
 @pytest.fixture
@@ -497,3 +689,191 @@ def test_github_callback_rejects_missing_or_unknown_state(
 
     assert missing.status_code == 400
     assert unknown.status_code == 400
+
+
+def test_install_url_maps_github_app_error_to_502(github_import_context) -> None:
+    client, _, user_id = github_import_context
+
+    class FailingAppClient(FakeGitHubClient):
+        async def get_app(self):
+            raise GitHubApiError("GitHub App unavailable")
+
+    client.app.dependency_overrides[get_github_client] = FailingAppClient
+    response = client.get(
+        "/github/install-url",
+        headers={"Authorization": f"Bearer {create_access_token(user_id, TEST_SECRET)}"},
+    )
+    assert response.status_code == 502
+
+
+def test_repeated_github_import_returns_stable_conflict(github_import_context) -> None:
+    client, session_factory, user_id = github_import_context
+    headers = {"Authorization": f"Bearer {create_access_token(user_id, TEST_SECRET)}"}
+    payload = {"source_type": "github", "github_repo_id": 1001, "branch": "main"}
+
+    first = client.post("/repositories", headers=headers, json=payload)
+    second = client.post("/repositories", headers=headers, json=payload)
+
+    assert first.status_code == 201
+    assert second.status_code == 409
+    assert second.json()["detail"] == "Repository is already imported"
+
+    async def repository_count() -> int:
+        async with session_factory() as session:
+            return len(list(await session.scalars(select(Repository))))
+
+    assert asyncio.run(repository_count()) == 1
+
+
+def test_revoked_first_installation_does_not_block_later_import(github_import_context) -> None:
+    client, session_factory, user_id = github_import_context
+
+    async def seed_second_installation_and_existing_repository() -> uuid.UUID:
+        async with session_factory() as session:
+            first = await session.scalar(select(GitHubInstallation))
+            assert first is not None
+            second = GitHubInstallation(
+                user_id=user_id, installation_id=88, account_login="second"
+            )
+            session.add(second)
+            session.add(
+                Repository(
+                    owner_id=user_id,
+                    github_installation_id=first.id,
+                    source_type=RepositorySourceType.GITHUB,
+                    github_repo_id=2002,
+                    name="prior",
+                    default_branch="main",
+                    selected_branch="main",
+                    access_status=RepositoryAccessStatus.ACTIVE,
+                )
+            )
+            await session.commit()
+            return first.id
+
+    first_id = asyncio.run(seed_second_installation_and_existing_repository())
+
+    class RevokedFirstClient(FakeGitHubClient):
+        async def list_repositories(self, installation_id):
+            if installation_id == 77:
+                raise GitHubInstallationRevoked("Installation revoked")
+            assert installation_id == 88
+            return [{
+                "id": 1001, "name": "fixture", "default_branch": "main",
+                "full_name": "example/fixture", "private": True,
+            }]
+
+        async def get_branch_revision(self, installation_id, repository_id, branch):
+            assert (installation_id, repository_id, branch) == (88, 1001, "main")
+            return "commit-sha"
+
+        async def get_repository_tree(self, installation_id, repository_id, revision):
+            assert (installation_id, repository_id, revision) == (88, 1001, "commit-sha")
+            return [{"path": "app.py", "type": "blob", "sha": "sha-app", "size": 42}]
+
+        async def get_blob_content(self, installation_id, repository_id, blob_sha):
+            assert (installation_id, repository_id) == (88, 1001)
+            return self.blobs[blob_sha]
+
+    client.app.dependency_overrides[get_github_client] = RevokedFirstClient
+    response = client.post(
+        "/repositories",
+        headers={"Authorization": f"Bearer {create_access_token(user_id, TEST_SECRET)}"},
+        json={"source_type": "github", "github_repo_id": 1001, "branch": "main"},
+    )
+    assert response.status_code == 201
+
+    async def inspect() -> None:
+        async with session_factory() as session:
+            first = await session.get(GitHubInstallation, first_id)
+            prior = await session.scalar(
+                select(Repository).where(Repository.github_repo_id == 2002)
+            )
+            assert first is not None and first.status is GitHubInstallationStatus.REVOKED
+            assert prior is not None and prior.access_status is RepositoryAccessStatus.ACCESS_LOST
+
+    asyncio.run(inspect())
+
+
+def test_listing_access_loss_marks_existing_repository(github_import_context) -> None:
+    client, session_factory, user_id = github_import_context
+
+    async def seed_repository() -> None:
+        async with session_factory() as session:
+            installation = await session.scalar(select(GitHubInstallation))
+            assert installation is not None
+            session.add(
+                Repository(
+                    owner_id=user_id,
+                    github_installation_id=installation.id,
+                    source_type=RepositorySourceType.GITHUB,
+                    github_repo_id=2002,
+                    name="prior",
+                    default_branch="main",
+                    selected_branch="main",
+                    access_status=RepositoryAccessStatus.ACTIVE,
+                )
+            )
+            await session.commit()
+
+    asyncio.run(seed_repository())
+
+    class AccessLostClient(FakeGitHubClient):
+        async def list_repositories(self, installation_id):
+            del installation_id
+            raise GitHubAccessLost("Installation repository access lost")
+
+    client.app.dependency_overrides[get_github_client] = AccessLostClient
+    response = client.post(
+        "/repositories",
+        headers={"Authorization": f"Bearer {create_access_token(user_id, TEST_SECRET)}"},
+        json={"source_type": "github", "github_repo_id": 1001, "branch": "main"},
+    )
+    assert response.status_code == 404
+
+    async def access_status() -> RepositoryAccessStatus:
+        async with session_factory() as session:
+            repository = await session.scalar(select(Repository))
+            assert repository is not None
+            return repository.access_status
+
+    assert asyncio.run(access_status()) is RepositoryAccessStatus.ACCESS_LOST
+
+
+@pytest.mark.parametrize(
+    ("error_type", "expected_status"),
+    [
+        (GitHubInstallationRevoked, 401),
+        (GitHubAccessLost, 403),
+        (GitHubRepositoryDeleted, 404),
+        (GitHubBranchMissing, 404),
+        (GitHubRateLimited, 429),
+        (GitHubApiError, 502),
+    ],
+)
+def test_github_import_maps_typed_source_failures(
+    github_import_context, error_type: type[Exception], expected_status: int
+) -> None:
+    client, session_factory, user_id = github_import_context
+
+    class FailingSourceClient(FakeGitHubClient):
+        async def get_branch_revision(self, installation_id, repository_id, branch):
+            del installation_id, repository_id, branch
+            raise error_type("GitHub source unavailable")
+
+    client.app.dependency_overrides[get_github_client] = FailingSourceClient
+    response = client.post(
+        "/repositories",
+        headers={"Authorization": f"Bearer {create_access_token(user_id, TEST_SECRET)}"},
+        json={"source_type": "github", "github_repo_id": 1001, "branch": "main"},
+    )
+    assert response.status_code == expected_status
+
+    if error_type is GitHubInstallationRevoked:
+        async def status() -> GitHubInstallationStatus:
+            async with session_factory() as session:
+                installation = await session.scalar(select(GitHubInstallation))
+                assert installation is not None
+                return installation.status
+
+        assert asyncio.run(status()) is GitHubInstallationStatus.REVOKED

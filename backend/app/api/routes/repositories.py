@@ -5,7 +5,8 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
@@ -16,7 +17,14 @@ from app.db.session import get_db
 from app.ingestion.pipeline import discover_and_normalize, exceeds_mvp_file_target
 from app.ingestion.security import ZipSafetyError, safe_extract
 from app.github.client import GitHubClient
-from app.github.errors import GitHubApiError
+from app.github.errors import (
+    GitHubAccessLost,
+    GitHubApiError,
+    GitHubBranchMissing,
+    GitHubInstallationRevoked,
+    GitHubRateLimited,
+    GitHubRepositoryDeleted,
+)
 from app.models.github_installation import (
     GitHubInstallation,
     GitHubInstallationStatus,
@@ -46,6 +54,37 @@ class GitHubRepositoryImport(BaseModel):
     source_type: Literal["github"]
     github_repo_id: int
     branch: str | None = None
+
+
+async def _mark_installation_revoked(
+    db: AsyncSession, installation_id: uuid.UUID
+) -> None:
+    await db.execute(
+        update(GitHubInstallation)
+        .where(GitHubInstallation.id == installation_id)
+        .values(status=GitHubInstallationStatus.REVOKED)
+    )
+    await db.execute(
+        update(Repository)
+        .where(Repository.github_installation_id == installation_id)
+        .values(access_status=RepositoryAccessStatus.ACCESS_LOST)
+    )
+    await db.commit()
+
+
+async def _mark_repository_access(
+    db: AsyncSession,
+    installation_id: uuid.UUID,
+    github_repo_id: int | None,
+    access_status: RepositoryAccessStatus,
+) -> None:
+    statement = update(Repository).where(
+        Repository.github_installation_id == installation_id
+    )
+    if github_repo_id is not None:
+        statement = statement.where(Repository.github_repo_id == github_repo_id)
+    await db.execute(statement.values(access_status=access_status))
+    await db.commit()
 
 
 async def _save_upload(upload: UploadFile, path: Path, max_bytes: int) -> None:
@@ -143,46 +182,69 @@ async def import_repository(
                 select(GitHubInstallation).where(
                     GitHubInstallation.user_id == current_user.id,
                     GitHubInstallation.status == GitHubInstallationStatus.ACTIVE,
-                )
+                ).order_by(GitHubInstallation.installation_id)
             )
         )
         selected_installation: GitHubInstallation | None = None
         metadata: dict | None = None
-        try:
-            for installation in installations:
+        revoked_seen = False
+        for installation in installations:
+            try:
                 repositories = await github_client.list_repositories(
                     installation.installation_id
                 )
-                metadata = next(
-                    (
-                        repository
-                        for repository in repositories
-                        if repository.get("id") == payload.github_repo_id
-                    ),
-                    None,
+            except GitHubInstallationRevoked:
+                revoked_seen = True
+                await _mark_installation_revoked(db, installation.id)
+                continue
+            except GitHubAccessLost:
+                await _mark_repository_access(
+                    db, installation.id, None, RepositoryAccessStatus.ACCESS_LOST
                 )
-                if metadata is not None:
-                    selected_installation = installation
-                    break
-        except GitHubApiError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+                continue
+            except GitHubRateLimited as exc:
+                raise HTTPException(status_code=429, detail=str(exc)) from exc
+            except GitHubApiError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            metadata = next(
+                (
+                    repository
+                    for repository in repositories
+                    if repository.get("id") == payload.github_repo_id
+                ),
+                None,
+            )
+            if metadata is not None:
+                selected_installation = installation
+                break
         if selected_installation is None or metadata is None:
             raise HTTPException(
-                status_code=404,
+                status_code=401 if revoked_seen and len(installations) == 1 else 404,
                 detail="Repository is not available to an active GitHub installation",
             )
 
-        default_branch = metadata.get("default_branch") or await github_client.get_default_branch(
-            selected_installation.installation_id,
-            payload.github_repo_id,
+        existing = await db.scalar(
+            select(Repository).where(
+                Repository.owner_id == current_user.id,
+                Repository.github_installation_id == selected_installation.id,
+                Repository.github_repo_id == payload.github_repo_id,
+            )
         )
-        selected_branch = payload.branch or default_branch
-        source = GitHubRepositorySource(
-            github_client,
-            selected_installation.installation_id,
-            payload.github_repo_id,
-        )
+        if existing is not None:
+            raise HTTPException(status_code=409, detail="Repository is already imported")
+        selected_installation_id = selected_installation.id
+        selected_installation_number = selected_installation.installation_id
         try:
+            default_branch = metadata.get("default_branch") or await github_client.get_default_branch(
+                selected_installation_number,
+                payload.github_repo_id,
+            )
+            selected_branch = payload.branch or default_branch
+            source = GitHubRepositorySource(
+                github_client,
+                selected_installation_number,
+                payload.github_repo_id,
+            )
             revision = await source.get_revision(selected_branch)
             return await _persist_repository(
                 db,
@@ -193,9 +255,40 @@ async def import_repository(
                 metadata.get("name") or str(payload.github_repo_id),
                 default_branch,
                 selected_branch,
-                selected_installation.id,
+                selected_installation_id,
                 payload.github_repo_id,
             )
+        except GitHubInstallationRevoked as exc:
+            await db.rollback()
+            await _mark_installation_revoked(db, selected_installation_id)
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        except GitHubAccessLost as exc:
+            await db.rollback()
+            await _mark_repository_access(
+                db,
+                selected_installation_id,
+                payload.github_repo_id,
+                RepositoryAccessStatus.ACCESS_LOST,
+            )
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except GitHubRepositoryDeleted as exc:
+            await db.rollback()
+            await _mark_repository_access(
+                db,
+                selected_installation_id,
+                payload.github_repo_id,
+                RepositoryAccessStatus.SOURCE_DELETED,
+            )
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except GitHubBranchMissing as exc:
+            await db.rollback()
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except GitHubRateLimited as exc:
+            await db.rollback()
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
+        except IntegrityError as exc:
+            await db.rollback()
+            raise HTTPException(status_code=409, detail="Repository is already imported") from exc
         except GitHubApiError as exc:
             await db.rollback()
             raise HTTPException(status_code=502, detail=str(exc)) from exc

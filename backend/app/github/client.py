@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urlsplit
 
 import httpx
 import jwt
@@ -45,6 +46,17 @@ class GitHubClient:
         self._transport = transport
         self._sleep = sleep
         self._token_cache: dict[int, CachedInstallationToken] = {}
+        self._http_client: httpx.AsyncClient | None = None
+
+    def _client(self) -> httpx.AsyncClient:
+        if self._http_client is None or self._http_client.is_closed:
+            self._http_client = httpx.AsyncClient(transport=self._transport, timeout=20)
+        return self._http_client
+
+    async def aclose(self) -> None:
+        if self._http_client is not None and not self._http_client.is_closed:
+            await self._http_client.aclose()
+        self._http_client = None
 
     @property
     def user_authorization_configured(self) -> bool:
@@ -82,28 +94,30 @@ class GitHubClient:
         json: dict[str, Any] | None = None,
         error_kind: str = "api",
     ) -> httpx.Response:
-        url = (
-            path_or_url
-            if path_or_url.startswith("http://") or path_or_url.startswith("https://")
-            else f"{self._base_url}{path_or_url}"
-        )
+        if path_or_url.startswith("http://") or path_or_url.startswith("https://"):
+            requested = urlsplit(path_or_url)
+            configured = urlsplit(self._base_url)
+            if (requested.scheme, requested.netloc) != (
+                configured.scheme,
+                configured.netloc,
+            ):
+                raise GitHubApiError("GitHub pagination URL is outside the API origin")
+            url = path_or_url
+        else:
+            url = f"{self._base_url}{path_or_url}"
         for attempt in range(3):
             try:
-                async with httpx.AsyncClient(
-                    transport=self._transport,
-                    timeout=20,
-                ) as client:
-                    response = await client.request(
-                        method,
-                        url,
-                        params=params,
-                        json=json,
-                        headers={
-                            "Accept": "application/vnd.github+json",
-                            "Authorization": f"Bearer {token}",
-                            "X-GitHub-Api-Version": "2022-11-28",
-                        },
-                    )
+                response = await self._client().request(
+                    method,
+                    url,
+                    params=params,
+                    json=json,
+                    headers={
+                        "Accept": "application/vnd.github+json",
+                        "Authorization": f"Bearer {token}",
+                        "X-GitHub-Api-Version": "2022-11-28",
+                    },
+                )
             except httpx.TimeoutException as exc:
                 if attempt == 1:
                     raise GitHubApiError("GitHub API request timed out") from exc
@@ -162,6 +176,7 @@ class GitHubClient:
         if error_kind == "repository" and status_code == 404:
             raise GitHubRepositoryDeleted("GitHub repository no longer exists")
         if error_kind in {
+            "installation",
             "repository",
             "access",
             "installation_repositories",
@@ -206,19 +221,15 @@ class GitHubClient:
                 "GitHub user authorization is not configured"
             )
         try:
-            async with httpx.AsyncClient(
-                transport=self._transport,
-                timeout=20,
-            ) as client:
-                response = await client.post(
-                    f"{self._oauth_base_url}/login/oauth/access_token",
-                    data={
-                        "client_id": self._settings.github_client_id,
-                        "client_secret": self._settings.github_client_secret,
-                        "code": code,
-                    },
-                    headers={"Accept": "application/json"},
-                )
+            response = await self._client().post(
+                f"{self._oauth_base_url}/login/oauth/access_token",
+                data={
+                    "client_id": self._settings.github_client_id,
+                    "client_secret": self._settings.github_client_secret,
+                    "code": code,
+                },
+                headers={"Accept": "application/json"},
+            )
         except httpx.TimeoutException as exc:
             raise GitHubApiError("GitHub user authorization timed out") from exc
         if response.status_code >= 400:
@@ -260,18 +271,11 @@ class GitHubClient:
 
     async def list_repositories(self, installation_id: int) -> list[dict[str, Any]]:
         token = await self.get_installation_token(installation_id)
-        payloads = await self._paginate(
+        return await self._paginate(
             "/installation/repositories",
             token=token,
-            error_kind="installation",
+            error_kind="installation_repositories",
         )
-        repositories: list[dict[str, Any]] = []
-        for payload in payloads:
-            if "repositories" in payload:
-                repositories.extend(payload["repositories"])
-            else:
-                repositories.append(payload)
-        return repositories
 
     async def _paginate(
         self,
@@ -294,7 +298,16 @@ class GitHubClient:
             if isinstance(payload, list):
                 items.extend(payload)
             elif isinstance(payload, dict):
-                items.append(payload)
+                envelope = next(
+                    (key for key in ("installations", "repositories") if key in payload),
+                    None,
+                )
+                if envelope is None:
+                    items.append(payload)
+                elif isinstance(payload[envelope], list):
+                    items.extend(payload[envelope])
+                else:
+                    raise GitHubApiError("GitHub API returned an unexpected payload")
             else:
                 raise GitHubApiError("GitHub API returned an unexpected payload")
             url = response.links.get("next", {}).get("url", "")
@@ -330,7 +343,7 @@ class GitHubClient:
         token = await self.get_installation_token(installation_id)
         response = await self._request(
             "GET",
-            f"/repositories/{repository_id}/branches/{branch}",
+            f"/repositories/{repository_id}/branches/{quote(branch, safe='')}",
             token=token,
             error_kind="branch",
         )
@@ -374,6 +387,57 @@ class GitHubClient:
         encoded = "".join(payload["content"].split())
         return base64.b64decode(encoded, validate=True)
 
+    async def get_blob_prefix(
+        self,
+        installation_id: int,
+        repository_id: int,
+        blob_sha: str,
+        max_bytes: int,
+    ) -> bytes:
+        if max_bytes <= 0:
+            return b""
+        token = await self.get_installation_token(installation_id)
+        url = f"{self._base_url}/repositories/{repository_id}/git/blobs/{blob_sha}"
+        headers = {
+            "Accept": "application/vnd.github.raw+json",
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        for attempt in range(3):
+            try:
+                async with self._client().stream("GET", url, headers=headers) as response:
+                    if self._is_rate_limited(response):
+                        if attempt == 2:
+                            raise GitHubRateLimited("GitHub API rate limit was exhausted")
+                        delay = self._rate_limit_delay(response, attempt)
+                    elif response.status_code >= 500:
+                        if attempt == 2:
+                            raise GitHubApiError(
+                                f"GitHub API failed with status {response.status_code}"
+                            )
+                        delay = float(2**attempt)
+                    else:
+                        if response.status_code >= 400:
+                            self._raise_typed_error(response.status_code, "repository")
+                        if response.status_code not in {200, 206}:
+                            raise GitHubApiError(
+                                "GitHub raw blob request returned an unexpected status"
+                            )
+                        parts: list[bytes] = []
+                        remaining = max_bytes
+                        async for chunk in response.aiter_bytes():
+                            parts.append(chunk[:remaining])
+                            remaining -= min(len(chunk), remaining)
+                            if remaining == 0:
+                                break
+                        return b"".join(parts)
+            except httpx.TimeoutException as exc:
+                if attempt == 1:
+                    raise GitHubApiError("GitHub API request timed out") from exc
+                delay = float(2**attempt)
+            await self._sleep(delay)
+        raise GitHubApiError("GitHub API request failed")
+
     async def get_file_content(
         self,
         installation_id: int,
@@ -384,7 +448,7 @@ class GitHubClient:
         token = await self.get_installation_token(installation_id)
         response = await self._request(
             "GET",
-            f"/repositories/{repository_id}/contents/{path}",
+            f"/repositories/{repository_id}/contents/{quote(path, safe='/')}",
             token=token,
             params={"ref": ref},
             error_kind="repository",

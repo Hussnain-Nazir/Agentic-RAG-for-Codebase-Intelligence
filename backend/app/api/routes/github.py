@@ -42,6 +42,12 @@ def get_github_client(
     return _CLIENTS[cache_key]
 
 
+async def close_github_clients() -> None:
+    for client in _CLIENTS.values():
+        await client.aclose()
+    _CLIENTS.clear()
+
+
 class InstallUrlResponse(BaseModel):
     url: str
 
@@ -64,7 +70,10 @@ async def install_url(
             status_code=503,
             detail="GitHub user authorization is not configured",
         )
-    app_metadata = await client.get_app()
+    try:
+        app_metadata = await client.get_app()
+    except GitHubApiError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     html_url = app_metadata.get("html_url")
     if not isinstance(html_url, str) or not html_url.startswith("https://github.com/apps/"):
         raise HTTPException(status_code=502, detail="GitHub App metadata was invalid")
