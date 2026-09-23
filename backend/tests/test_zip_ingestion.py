@@ -14,16 +14,31 @@ from sqlalchemy.pool import StaticPool
 
 from app.auth.security import create_access_token
 from app.config import Settings, get_settings
+from app.api.routes.repositories import get_embedding_provider
 from app.db.base import Base
 from app.db.session import get_db
 from app.ingestion.pipeline import MVP_INDEXABLE_FILE_TARGET, SNIFF_BYTES, discover_and_normalize
 from app.ingestion.security import ZipSafetyError, safe_extract
 from app.sources.base import SourceFileRef
 from app.main import create_app
-from app.models import RepositoryFile, RepositoryFileStatus, RepositoryIndex, User
+from app.models import CodeChunk, RepositoryFile, RepositoryFileStatus, RepositoryIndex, User
 
 FIXTURES = Path(__file__).parent / "fixtures"
 TEST_SECRET = "phase-five-test-secret-at-least-32-bytes"
+
+
+class FakeEmbeddingProvider:
+    dimensions = 384
+
+    def __init__(self) -> None:
+        self.call_count = 0
+        self.error: Exception | None = None
+
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        if self.error is not None:
+            raise self.error
+        self.call_count += 1
+        return [[1.0, *([0.0] * 383)] for _ in texts]
 
 
 def zip_entries(entries: dict[str, bytes]) -> bytes:
@@ -74,8 +89,10 @@ def ingestion_context() -> Iterator[
         )
 
     app = create_app()
+    embedding_provider = FakeEmbeddingProvider()
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_settings] = override_get_settings
+    app.dependency_overrides[get_embedding_provider] = lambda: embedding_provider
     with TestClient(app) as client:
         yield client, session_factory, user_id
     asyncio.run(engine.dispose())
@@ -249,8 +266,38 @@ def test_clean_fixture_normalizes_expected_repository_files(
             index = await session.scalar(select(RepositoryIndex))
             assert index is not None
             assert index.size_warning is False
+            chunks = list(await session.scalars(select(CodeChunk)))
+            assert chunks and all(chunk.embedding is not None for chunk in chunks)
+
+    assert client.app.dependency_overrides[get_embedding_provider]().call_count >= 1
 
     asyncio.run(inspect())
+
+
+def test_embedding_failure_does_not_mark_repository_ready(ingestion_context) -> None:
+    client, session_factory, user_id = ingestion_context
+    provider = client.app.dependency_overrides[get_embedding_provider]()
+    provider.error = RuntimeError("synthetic embedding failure")
+    response = client.post(
+        "/repositories",
+        headers=auth_headers(user_id),
+        files={
+            "upload": (
+                "clean.zip",
+                (FIXTURES / "clean_repo.zip").read_bytes(),
+                "application/zip",
+            )
+        },
+    )
+    assert response.status_code == 500
+
+    async def index_state() -> str:
+        async with session_factory() as session:
+            index = await session.scalar(select(RepositoryIndex))
+            assert index is not None
+            return index.state.value
+
+    assert asyncio.run(index_state()) == "FAILED"
 
 
 def test_repository_over_mvp_target_is_ready_with_size_warning(

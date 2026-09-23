@@ -1,7 +1,11 @@
 import hashlib
+import os
+import uuid
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -185,6 +189,8 @@ async def test_semantic_search_returns_most_similar_scoped_chunk(session_factory
         database = make_chunk(repository, repository_index, repository_file, "database setup")
         auth.embedding = vector(1.0)
         database.embedding = vector(0.0, 1.0)
+        auth.embedding_model_version = current_embedding_model_version()
+        database.embedding_model_version = current_embedding_model_version()
         session.add_all([auth, database])
         await session.flush()
 
@@ -212,6 +218,8 @@ async def test_semantic_search_never_crosses_repository_boundary(session_factory
         excluded = make_chunk(second_repo, second_index, second_file, "closer but excluded")
         allowed.embedding = vector(0.8, 0.2)
         excluded.embedding = vector(1.0)
+        allowed.embedding_model_version = current_embedding_model_version()
+        excluded.embedding_model_version = current_embedding_model_version()
         session.add_all([allowed, excluded])
         await session.flush()
 
@@ -225,3 +233,88 @@ async def test_semantic_search_never_crosses_repository_boundary(session_factory
 
         assert [chunk.id for chunk in results] == [allowed.id]
         assert all(chunk.repository_id == first_repo.id for chunk in results)
+
+
+@pytest.mark.asyncio
+async def test_semantic_search_excludes_stale_embedding_model_vectors(session_factory) -> None:
+    async with session_factory() as session:
+        repository, index, file = await make_repository(
+            session, "stale-vector@example.com"
+        )
+        current = make_chunk(repository, index, file, "current model")
+        stale = make_chunk(repository, index, file, "stale model")
+        current.embedding = vector(0.8, 0.2)
+        current.embedding_model_version = current_embedding_model_version()
+        stale.embedding = vector(1.0)
+        stale.embedding_model_version = "older-model:dimensions=384"
+        session.add_all([current, stale])
+        await session.flush()
+
+        results = await semantic_search(
+            repository.id, index.id, vector(1.0), 10, session=session
+        )
+
+        assert [item.id for item in results] == [current.id]
+
+
+@pytest.mark.asyncio
+async def test_postgres_pgvector_search_orders_and_limits_scoped_results() -> None:
+    database_url = os.getenv("PRISM_TEST_POSTGRES_URL")
+    if not database_url:
+        pytest.skip("A dedicated PostgreSQL test URL is not configured")
+    if "test" not in (make_url(database_url).database or "").lower():
+        pytest.fail("The PostgreSQL integration test requires a test database")
+
+    schema = f"prism_vector_test_{uuid.uuid4().hex}"
+    admin_engine = create_async_engine(database_url)
+    engine = None
+    try:
+        async with admin_engine.begin() as connection:
+            await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+        engine = create_async_engine(
+            database_url,
+            connect_args={"server_settings": {"search_path": f"{schema},public"}},
+        )
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+            await connection.execute(
+                text(
+                    "CREATE INDEX ix_code_chunks_embedding_cosine "
+                    "ON code_chunks USING ivfflat (embedding vector_cosine_ops) "
+                    "WITH (lists = 1)"
+                )
+            )
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with factory() as session:
+            repository, index, file = await make_repository(
+                session, "pgvector@example.com"
+            )
+            other_repo, other_index, other_file = await make_repository(
+                session, "pgvector-other@example.com"
+            )
+            expected = make_chunk(repository, index, file, "expected")
+            farther = make_chunk(repository, index, file, "farther")
+            stale = make_chunk(repository, index, file, "stale")
+            other = make_chunk(other_repo, other_index, other_file, "other repository")
+            expected.embedding = vector(0.9, 0.1)
+            farther.embedding = vector(0.0, 1.0)
+            stale.embedding = vector(1.0)
+            other.embedding = vector(1.0)
+            for chunk in (expected, farther, other):
+                chunk.embedding_model_version = current_embedding_model_version()
+            stale.embedding_model_version = "older-model:dimensions=384"
+            session.add_all([expected, farther, stale, other])
+            await session.commit()
+            await session.execute(text("SET enable_seqscan = off"))
+
+            results = await semantic_search(
+                repository.id, index.id, vector(1.0), 1, session=session
+            )
+            assert [item.id for item in results] == [expected.id]
+    finally:
+        if engine is not None:
+            await engine.dispose()
+        async with admin_engine.begin() as connection:
+            await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        await admin_engine.dispose()

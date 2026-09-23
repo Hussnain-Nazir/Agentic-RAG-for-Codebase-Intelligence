@@ -1,5 +1,6 @@
 import tempfile
 import uuid
+from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -14,6 +15,9 @@ from app.api.routes.github import get_github_client
 from app.auth.dependencies import get_current_user
 from app.config import Settings, get_settings
 from app.db.session import get_db
+from app.embeddings.base import EmbeddingProvider
+from app.embeddings.local_provider import LocalEmbeddingProvider
+from app.ingestion.embedding_stage import embed_repository_chunks
 from app.ingestion.pipeline import discover_and_normalize, exceeds_mvp_file_target
 from app.ingestion.parsing_stage import parse_repository_files
 from app.ingestion.chunking_stage import chunk_repository_files
@@ -31,6 +35,7 @@ from app.models.github_installation import (
     GitHubInstallation,
     GitHubInstallationStatus,
 )
+from app.models.code_chunk import CodeChunk
 from app.models.repository import (
     Repository,
     RepositoryAccessStatus,
@@ -56,6 +61,17 @@ class GitHubRepositoryImport(BaseModel):
     source_type: Literal["github"]
     github_repo_id: int
     branch: str | None = None
+
+
+@lru_cache
+def _cached_embedding_provider(model_name: str) -> LocalEmbeddingProvider:
+    return LocalEmbeddingProvider(model_name=model_name)
+
+
+def get_embedding_provider(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> EmbeddingProvider:
+    return _cached_embedding_provider(settings.embedding_model_name)
 
 
 async def _mark_installation_revoked(
@@ -111,6 +127,8 @@ async def _persist_repository(
     name: str,
     default_branch: str,
     selected_branch: str,
+    embedding_provider: EmbeddingProvider,
+    settings: Settings,
     github_installation_id: uuid.UUID | None = None,
     github_repo_id: int | None = None,
 ) -> RepositoryImportResponse:
@@ -160,8 +178,26 @@ async def _persist_repository(
     repository_index.state = RepositoryIndexState.PARSING
     parsed_files = await parse_repository_files(persisted_files)
     repository_index.files_failed = sum(not item.parse_ok for item in parsed_files)
-    repository_index.state = RepositoryIndexState.INDEXING
     await chunk_repository_files(persisted_files, parsed_files)
+    repository_index.state = RepositoryIndexState.EMBEDDING
+    await db.flush()
+    chunks = list(
+        await db.scalars(
+            select(CodeChunk).where(
+                CodeChunk.repository_id == repository.id,
+                CodeChunk.repository_index_id == repository_index.id,
+            )
+        )
+    )
+    try:
+        await embed_repository_chunks(chunks, embedding_provider, settings=settings)
+    except Exception as exc:
+        repository_index.state = RepositoryIndexState.FAILED
+        repository_index.failure_reason = f"Embedding failed: {type(exc).__name__}"
+        await db.commit()
+        raise HTTPException(status_code=500, detail="Repository embedding failed") from exc
+    repository_index.state = RepositoryIndexState.INDEXING
+    await db.flush()
     repository_index.state = (
         RepositoryIndexState.PARTIAL
         if repository_index.files_failed
@@ -184,6 +220,7 @@ async def import_repository(
     current_user: Annotated[User, Depends(get_current_user)],
     settings: Annotated[Settings, Depends(get_settings)],
     github_client: Annotated[GitHubClient, Depends(get_github_client)],
+    embedding_provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
 ) -> RepositoryImportResponse:
     content_type = request.headers.get("content-type", "")
     if content_type.startswith("application/json"):
@@ -269,6 +306,8 @@ async def import_repository(
                 metadata.get("name") or str(payload.github_repo_id),
                 default_branch,
                 selected_branch,
+                embedding_provider,
+                settings,
                 selected_installation_id,
                 payload.github_repo_id,
             )
@@ -341,4 +380,6 @@ async def import_repository(
             Path(upload.filename).stem,
             "upload",
             "upload",
+            embedding_provider,
+            settings,
         )

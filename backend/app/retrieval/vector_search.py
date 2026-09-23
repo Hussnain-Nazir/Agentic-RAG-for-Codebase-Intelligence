@@ -4,6 +4,8 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import Settings
+from app.ingestion.embedding_stage import current_embedding_model_version
 from app.models.code_chunk import CodeChunk
 
 EMBEDDING_DIMENSIONS = 384
@@ -31,6 +33,7 @@ async def semantic_search(
     top_k: int,
     *,
     session: AsyncSession,
+    settings: Settings | None = None,
 ) -> list[CodeChunk]:
     """Return scoped chunks ordered by cosine distance."""
     if top_k <= 0:
@@ -39,6 +42,7 @@ async def semantic_search(
         raise ValueError(
             f"Query embedding must have {EMBEDDING_DIMENSIONS} dimensions"
         )
+    active_version = current_embedding_model_version(settings)
 
     scoped = (
         select(CodeChunk)
@@ -46,6 +50,7 @@ async def semantic_search(
             CodeChunk.repository_id == repository_id,
             CodeChunk.repository_index_id == repository_index_id,
             CodeChunk.embedding.is_not(None),
+            CodeChunk.embedding_model_version == active_version,
         )
     )
     dialect = session.bind.dialect.name if session.bind is not None else ""

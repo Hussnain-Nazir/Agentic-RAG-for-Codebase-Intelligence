@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import StaticPool
 
 from app.api.routes.github import get_github_client
+from app.api.routes.repositories import get_embedding_provider
 from app.auth.security import create_access_token
 from app.config import Settings, get_settings
 from app.db.base import Base
@@ -43,6 +44,13 @@ from app.sources.github import GitHubRepositorySource
 
 TEST_SECRET = "phase-six-test-secret-at-least-32-bytes"
 FUTURE_EXPIRY = "2099-01-01T00:00:00Z"
+
+
+class FakeEmbeddingProvider:
+    dimensions = 384
+
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        return [[1.0, *([0.0] * 383)] for _ in texts]
 
 
 async def no_sleep(delay: float) -> None:
@@ -546,6 +554,7 @@ def github_import_context() -> Iterator[
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_settings] = override_get_settings
     app.dependency_overrides[get_github_client] = FakeGitHubClient
+    app.dependency_overrides[get_embedding_provider] = FakeEmbeddingProvider
     with TestClient(app) as client:
         yield client, session_factory, user_id
     asyncio.run(engine.dispose())
