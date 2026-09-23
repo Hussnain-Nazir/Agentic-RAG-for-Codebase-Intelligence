@@ -1,4 +1,3 @@
-import hashlib
 from pathlib import PurePosixPath
 
 from sqlalchemy import delete, select
@@ -10,12 +9,12 @@ from app.chunking.fallback_chunker import FallbackChunker
 from app.chunking.js_ts_chunker import JavaScriptTypeScriptChunker
 from app.chunking.python_chunker import PythonChunker
 from app.models.code_chunk import CodeChunk, CodeChunkType
-from app.models.repository_file import RepositoryFile
+from app.models.repository_file import RepositoryFile, RepositoryFileStatus
 from app.models.repository_index import RepositoryIndex
 from app.parsing.base import ParsedFile
 
 CONFIG_EXTENSIONS = {".json", ".yaml", ".yml", ".toml"}
-DOCUMENT_EXTENSIONS = {".md", ".txt", ".pdf"}
+DOCUMENT_EXTENSIONS = {".md", ".txt"}
 
 
 def _plain_parsed(file: RepositoryFile, language: str) -> ParsedFile:
@@ -59,7 +58,7 @@ async def chunk_repository_files(
     drafts: list[ChunkDraft] = []
 
     for file in files:
-        if file.content is None:
+        if file.status is not RepositoryFileStatus.OK or file.content is None:
             continue
         suffix = PurePosixPath(file.path).suffix.lower()
         parsed = parsed_by_path.get(file.path)
@@ -116,7 +115,6 @@ async def chunk_repository_files(
             )
 
     for draft in drafts:
-        digest = hashlib.sha256(draft.content.encode("utf-8")).hexdigest()
         session.add(
             CodeChunk(
                 repository_id=draft.repository_id,
@@ -131,7 +129,7 @@ async def chunk_repository_files(
                 start_line=draft.start_line,
                 end_line=draft.end_line,
                 content=draft.content,
-                content_hash=digest,
+                content_hash=draft.content_hash,
                 embedding=None,
                 chunk_metadata={
                     **draft.metadata,

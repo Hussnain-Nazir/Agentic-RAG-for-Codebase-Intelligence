@@ -59,6 +59,33 @@ def test_large_function_splits_with_overlap_and_full_symbol_metadata() -> None:
         assert 1 <= chunk.start_line <= chunk.end_line <= len(source.splitlines())
 
 
+def test_large_class_keeps_fields_between_methods() -> None:
+    large_body = "".join(f"        value_{number} = {number}\n" for number in range(180))
+    source = (
+        "class Large:\n"
+        "    def first(self):\n"
+        f"{large_body}"
+        "        return value_0\n"
+        "    between_methods = 42\n"
+        "    def second(self):\n"
+        "        return self.between_methods\n"
+    )
+    parsed = PythonTreeSitterParser().parse(source, "large_class.py")
+    repository_id, index_id, file_id = ids()
+
+    chunks = PythonChunker().chunk(
+        source,
+        parsed,
+        repository_id=repository_id,
+        repository_index_id=index_id,
+        file_id=file_id,
+    )
+
+    assert parsed.parse_ok
+    assert any(item.chunk_type is CodeChunkType.METHOD for item in chunks)
+    assert any("between_methods = 42" in item.content for item in chunks)
+
+
 def test_tiny_adjacent_exports_merge_into_module_section() -> None:
     source = (
         "export const first = () => 1;\n"
@@ -195,16 +222,26 @@ async def test_chunking_stage_persists_one_config_chunk_and_non_null_hashes() ->
             size_bytes=17,
             content='{"enabled": true}',
         )
-        session.add(config)
+        pdf = RepositoryFile(
+            repository_index_id=index.id,
+            path="guide.pdf",
+            language=None,
+            content_hash=None,
+            status=RepositoryFileStatus.BINARY,
+            size_bytes=20,
+            content="untrusted PDF bytes",
+        )
+        session.add_all([config, pdf])
         await session.flush()
 
-        drafts = await chunk_repository_files([config], [])
+        drafts = await chunk_repository_files([config, pdf], [])
         rows = list(await session.scalars(select(CodeChunk)))
 
         assert len(drafts) == len(rows) == 1
         assert rows[0].chunk_type is CodeChunkType.MODULE_SECTION
         assert rows[0].language == "config"
         assert rows[0].content_hash
+        assert rows[0].content_hash == drafts[0].content_hash
         assert rows[0].start_line == rows[0].end_line == 1
         assert rows[0].embedding is None
 

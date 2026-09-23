@@ -80,6 +80,7 @@ def chunk_structural_file(
                             },
                         )
                     )
+                    occupied.update(range(start_line, header_end + 1))
             for method in class_methods:
                 method_start = leading_comment_start(
                     lines,
@@ -109,7 +110,7 @@ def chunk_structural_file(
                     },
                 )
                 symbol_chunks.extend(split_large_chunk(method_draft))
-            occupied.update(range(start_line, end_line + 1))
+                occupied.update(range(method_start, method.end_line + 1))
             continue
         draft = make_draft(
             repository_id=repository_id,

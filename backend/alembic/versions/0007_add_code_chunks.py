@@ -1,7 +1,7 @@
 """Enable pgvector and add code chunks.
 
 Revision ID: 0007
-Revises: 0006
+Revises: 0006b
 """
 from collections.abc import Sequence
 
@@ -11,7 +11,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "0007"
-down_revision: str | None = "0006"
+down_revision: str | None = "0006b"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
