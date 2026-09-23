@@ -243,6 +243,8 @@ def test_github_source_stub_enforces_not_implemented() -> None:
         with pytest.raises(NotImplementedError, match="not implemented"):
             await source.get_file_content("main", "app.py")
         with pytest.raises(NotImplementedError, match="not implemented"):
+            await source.get_file_prefix("main", "app.py", 8192)
+        with pytest.raises(NotImplementedError, match="not implemented"):
             await source.get_revision("main")
 
     asyncio.run(call_methods())

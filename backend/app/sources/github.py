@@ -12,5 +12,8 @@ class GitHubRepositorySource:
     async def get_file_content(self, ref: str, path: str) -> bytes:
         raise NotImplementedError("GitHub repository file reading is not implemented")
 
+    async def get_file_prefix(self, ref: str, path: str, max_bytes: int) -> bytes:
+        raise NotImplementedError("GitHub repository file prefix reading is not implemented")
+
     async def get_revision(self, ref: str) -> str:
         raise NotImplementedError("GitHub repository revision lookup is not implemented")

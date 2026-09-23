@@ -9,6 +9,17 @@ from app.sources.base import SourceFileRef
 class UploadedRepositorySource:
     source_type: Literal["upload"] = "upload"
 
+    @staticmethod
+    def _file_path(ref: str, path: str) -> Path:
+        root = Path(ref).resolve()
+        normalized = PurePosixPath(path.replace("\\", "/"))
+        if normalized.is_absolute() or ".." in normalized.parts:
+            raise ValueError(f"Invalid repository path: {path}")
+        target = (root / Path(*normalized.parts)).resolve()
+        if not target.is_relative_to(root):
+            raise ValueError(f"Repository path escapes the source root: {path}")
+        return target
+
     async def list_files(self, ref: str) -> list[SourceFileRef]:
         root = Path(ref).resolve()
         gitignore = root / ".gitignore"
@@ -28,20 +39,20 @@ class UploadedRepositorySource:
         return sorted(files, key=lambda item: item.path)
 
     async def get_file_content(self, ref: str, path: str) -> bytes:
-        root = Path(ref).resolve()
-        normalized = PurePosixPath(path.replace("\\", "/"))
-        if normalized.is_absolute() or ".." in normalized.parts:
-            raise ValueError(f"Invalid repository path: {path}")
-        target = (root / Path(*normalized.parts)).resolve()
-        if not target.is_relative_to(root):
-            raise ValueError(f"Repository path escapes the source root: {path}")
-        return target.read_bytes()
+        return self._file_path(ref, path).read_bytes()
+
+    async def get_file_prefix(self, ref: str, path: str, max_bytes: int) -> bytes:
+        with self._file_path(ref, path).open("rb") as source:
+            return source.read(max_bytes)
 
     async def get_revision(self, ref: str) -> str:
         tree_hash = hashlib.sha256()
         for file_ref in await self.list_files(ref):
-            content = await self.get_file_content(ref, file_ref.path)
-            content_hash = hashlib.sha256(content).hexdigest()
+            file_hash = hashlib.sha256()
+            with self._file_path(ref, file_ref.path).open("rb") as source:
+                while chunk := source.read(1024 * 1024):
+                    file_hash.update(chunk)
+            content_hash = file_hash.hexdigest()
             tree_hash.update(file_ref.path.encode("utf-8"))
             tree_hash.update(b"\x00")
             tree_hash.update(content_hash.encode("ascii"))

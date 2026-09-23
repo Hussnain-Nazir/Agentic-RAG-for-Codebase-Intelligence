@@ -16,8 +16,9 @@ from app.auth.security import create_access_token
 from app.config import Settings, get_settings
 from app.db.base import Base
 from app.db.session import get_db
-from app.ingestion.pipeline import MVP_INDEXABLE_FILE_TARGET
+from app.ingestion.pipeline import MVP_INDEXABLE_FILE_TARGET, SNIFF_BYTES, discover_and_normalize
 from app.ingestion.security import ZipSafetyError, safe_extract
+from app.sources.base import SourceFileRef
 from app.main import create_app
 from app.models import RepositoryFile, RepositoryFileStatus, RepositoryIndex, User
 
@@ -98,6 +99,66 @@ def test_zip_slip_is_rejected_before_outside_file_is_written() -> None:
 
         assert not outside.exists()
         assert not extraction_root.exists()
+
+
+def test_normalization_skips_full_reads_for_oversized_and_binary_files() -> None:
+    class ProbeSource:
+        source_type = "upload"
+
+        def __init__(self) -> None:
+            self.prefix_reads: list[tuple[str, int]] = []
+            self.full_reads: list[str] = []
+
+        async def list_files(self, ref: str) -> list[SourceFileRef]:
+            del ref
+            return [
+                SourceFileRef("large.py", 10**12),
+                SourceFileRef("image.bin", 5),
+                SourceFileRef("binary.txt", 5),
+                SourceFileRef("main.py", 10),
+            ]
+
+        async def get_file_prefix(self, ref: str, path: str, max_bytes: int) -> bytes:
+            del ref
+            self.prefix_reads.append((path, max_bytes))
+            return b"a\x00b" if path == "binary.txt" else b"value = 1\n"
+
+        async def get_file_content(self, ref: str, path: str) -> bytes:
+            del ref
+            self.full_reads.append(path)
+            return b"value = 1\n"
+
+        async def get_revision(self, ref: str) -> str:
+            del ref
+            return "test-revision"
+
+    source = ProbeSource()
+    files = asyncio.run(discover_and_normalize(source, "test-revision"))
+    by_path = {item.path: item for item in files}
+
+    assert by_path["large.py"].status is RepositoryFileStatus.OVERSIZED
+    assert by_path["image.bin"].status is RepositoryFileStatus.BINARY
+    assert by_path["binary.txt"].status is RepositoryFileStatus.BINARY
+    assert by_path["main.py"].status is RepositoryFileStatus.OK
+    assert all(by_path[path].content_hash is None for path in ("large.py", "image.bin", "binary.txt"))
+    assert source.prefix_reads == [("binary.txt", SNIFF_BYTES), ("main.py", SNIFF_BYTES)]
+    assert source.full_reads == ["main.py"]
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, NotImplementedError])
+def test_zip_reader_errors_use_safe_rejection_path(
+    error_type: type[Exception], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive_path = tmp_path / "archive.zip"
+    archive_path.write_bytes(zip_entries({"app.py": b"value = 1\n"}))
+
+    def fail_open(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise error_type("unsafe archive detail")
+
+    monkeypatch.setattr(zipfile.ZipFile, "open", fail_open)
+    with pytest.raises(ZipSafetyError, match="cannot be safely extracted"):
+        safe_extract(archive_path, tmp_path / "extracted")
 
 
 def test_oversized_zip_returns_413_before_extraction(

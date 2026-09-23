@@ -60,6 +60,15 @@ def safe_extract(zip_path: str | Path, dest_dir: str | Path) -> None:
             validated: list[tuple[zipfile.ZipInfo, Path]] = []
             for entry in entries:
                 relative_path = _validated_relative_path(entry.filename)
+                if entry.flag_bits & 0x1:
+                    raise ZipSafetyError("Encrypted ZIP entries are not supported")
+                if entry.compress_type not in {
+                    zipfile.ZIP_STORED,
+                    zipfile.ZIP_DEFLATED,
+                    zipfile.ZIP_BZIP2,
+                    zipfile.ZIP_LZMA,
+                }:
+                    raise ZipSafetyError("ZIP entry uses unsupported compression")
                 if _is_symlink(entry):
                     raise ZipSafetyError(
                         f"Archive entry is a symbolic link: {entry.filename}"
@@ -80,5 +89,5 @@ def safe_extract(zip_path: str | Path, dest_dir: str | Path) -> None:
                 with archive.open(entry) as source, target.open("wb") as output:
                     while chunk := source.read(1024 * 1024):
                         output.write(chunk)
-    except zipfile.BadZipFile as exc:
-        raise ZipSafetyError("Uploaded file is not a valid ZIP archive") from exc
+    except (zipfile.BadZipFile, RuntimeError, NotImplementedError) as exc:
+        raise ZipSafetyError("Uploaded file cannot be safely extracted") from exc
