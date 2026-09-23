@@ -16,6 +16,13 @@ from app.tools.schemas import (
 )
 
 ToolExecutor = Callable[[str, BaseModel], Awaitable[BaseModel]]
+RELATIONSHIP_PRIORITY = {
+    "CALLS": 3,
+    "API_CALL": 3,
+    "REFERENCES": 2,
+    "EXTENDS": 2,
+    "IMPORTS": 1,
+}
 
 
 @dataclass(slots=True)
@@ -140,10 +147,17 @@ async def investigate_change_impact(
                     reason="Defines the symbol named in the requested change.",
                     evidence_ids=ids,
                 )
+        preferred_references = {}
         for reference in getattr(references, "root", []):
             key = (reference.file, reference.symbol)
             if key in state.directly_affected:
                 continue
+            previous = preferred_references.get(key)
+            if previous is None or RELATIONSHIP_PRIORITY.get(
+                reference.relationship_kind, 0
+            ) > RELATIONSHIP_PRIORITY.get(previous.relationship_kind, 0):
+                preferred_references[key] = reference
+        for key, reference in preferred_references.items():
             ids = _supporting(state.evidence, reference.file, reference.symbol)
             if ids:
                 state.likely_indirectly_affected[key] = ImpactCandidate(

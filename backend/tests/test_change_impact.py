@@ -12,7 +12,7 @@ from app.agent.investigations.change_impact import (
     investigate_change_impact,
 )
 from app.evidence.models import Evidence
-from app.models import ModelExecution, ToolCall
+from app.models import CodeRelationship, CodeSymbol, ModelExecution, ToolCall
 from app.schemas.responses import ChangeImpactResponse
 from app.tools.schemas import (
     CodeReference,
@@ -168,6 +168,47 @@ def test_change_impact_separates_definition_and_consumers(qa_context) -> None:
         "search_codebase", "find_symbol", "find_references", "get_related_files"
     }
     assert len(models) == 1
+
+
+def test_change_impact_prefers_calls_over_imports_for_list_items(qa_context) -> None:
+    client, session_factory, repository, provider_box, _ = qa_context
+
+    async def stored_relationships() -> set[tuple[str, str, str | None]]:
+        async with session_factory() as session:
+            symbols = {
+                item.id: item.name
+                for item in await session.scalars(select(CodeSymbol))
+            }
+            return {
+                (
+                    symbols[item.from_symbol_id],
+                    item.kind.value,
+                    symbols.get(item.to_symbol_id),
+                )
+                for item in await session.scalars(select(CodeRelationship))
+            }
+
+    relationships = asyncio.run(stored_relationships())
+    assert ("list_items", "CALLS", "get_current_user") in relationships
+    assert ("list_items", "IMPORTS", "get_current_user") in relationships
+
+    provider_box["provider"] = MockProvider(callback=_impact_response)
+    response = client.post(
+        f"/repositories/{repository.id}/change-impact",
+        json={
+            "change_description": "Change `get_current_user` to check active accounts",
+            "model_slot": "A",
+        },
+    )
+
+    assert response.status_code == 200
+    impact = ChangeImpactResponse.model_validate(response.json()["impact"])
+    indirect = {item.symbol: item for item in impact.likely_indirectly_affected}
+    assert "CALLS" in indirect["list_items"].reason
+    assert "IMPORTS" not in indirect["list_items"].reason
+    assert "CALLS" in indirect["create_item"].reason
+    assert indirect["list_items"].evidence_ids
+    assert indirect["create_item"].evidence_ids
 
 
 def test_change_impact_rejects_fabricated_affected_area(qa_context) -> None:
