@@ -24,6 +24,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.evidence.models import Evidence
 from app.llm.mock import MockProvider
+from app.llm.base import LLMResult
 from app.main import create_app
 from app.models import AgentRun, AgentRunStatus, ModelExecution, Repository, ToolCall, User
 from app.sources.upload import UploadedRepositorySource
@@ -398,3 +399,54 @@ def test_repository_qa_provider_failure_returns_sanitized_502(qa_context) -> Non
     assert execution.validation_status == "NOT_VALIDATED"
     assert secret_marker not in execution.error
     assert "provider.example.test" not in execution.error
+
+
+def test_repository_qa_failed_schema_repair_returns_422(qa_context) -> None:
+    client, session_factory, repository, provider_box, _ = qa_context
+
+    class MalformedProvider:
+        model_name = "malformed-test"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete(self, messages, schema, timeout_s):
+            del messages, schema, timeout_s
+            self.calls += 1
+            return LLMResult(
+                content="{invalid",
+                input_tokens=2,
+                output_tokens=3,
+                latency_ms=4,
+                raw_response={},
+            )
+
+    provider = MalformedProvider()
+    provider_box["provider"] = provider
+    response = client.post(
+        f"/repositories/{repository.id}/ask",
+        json={"question": "How does authentication work?", "model_slot": "A"},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["message"] == "The model answer failed grounding validation"
+    assert "answer" not in detail
+    assert provider.calls == 2
+
+    async def persisted() -> tuple[AgentRun, list[ModelExecution]]:
+        async with session_factory() as session:
+            run_id = uuid.UUID(detail["agent_run_id"])
+            run = await session.get(AgentRun, run_id)
+            models = list(
+                await session.scalars(
+                    select(ModelExecution).where(ModelExecution.agent_run_id == run_id)
+                )
+            )
+            assert run is not None
+            return run, models
+
+    run, models = asyncio.run(persisted())
+    assert run.status is AgentRunStatus.INVALID_OUTPUT
+    assert len(models) == 2
+    assert all(model.validation_status == "INVALID" for model in models)

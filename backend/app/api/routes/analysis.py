@@ -2,7 +2,7 @@ import uuid
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.classification import TaskType
@@ -131,14 +131,21 @@ async def ask_repository(
             },
         )
 
-    answer = RepositoryAnswer.model_validate(result.result)
     if result.status is not AgentRunStatus.OK:
+        detail: dict[str, object] = {
+            "message": "The model answer failed grounding validation",
+            "agent_run_id": str(result.agent_run_id),
+        }
+        if result.result is not None:
+            try:
+                answer = RepositoryAnswer.model_validate(result.result)
+            except ValidationError:
+                pass
+            else:
+                detail["answer"] = answer.model_dump(mode="json")
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "message": "The model answer failed grounding validation",
-                "agent_run_id": str(result.agent_run_id),
-                "answer": answer.model_dump(mode="json"),
-            },
+            detail=detail,
         )
+    answer = RepositoryAnswer.model_validate(result.result)
     return AskRepositoryResponse(agent_run_id=result.agent_run_id, answer=answer)
