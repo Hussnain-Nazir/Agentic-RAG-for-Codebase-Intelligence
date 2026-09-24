@@ -48,6 +48,7 @@ from app.tools.errors import UnauthorizedRepositoryAccessError
 from app.tools.registry import ToolRegistry
 from app.tools.repository_context import authorize_repository
 from app.tools.schemas import (
+    ArchitectureSummary,
     FindReferencesInput,
     FindSymbolInput,
     InspectRepositoryInput,
@@ -70,6 +71,7 @@ REPOSITORY_QA_PROMPT_PATH = (
 )
 FLOW_TRACE_PROMPT_PATH = Path(__file__).parent / "prompts" / "v1" / "flow_trace.md"
 CHANGE_IMPACT_PROMPT_PATH = Path(__file__).parent / "prompts" / "v1" / "change_impact.md"
+ARCHITECTURE_PROMPT_PATH = Path(__file__).parent / "prompts" / "v1" / "architecture.md"
 PROMPT_MESSAGE_SPLIT = "<!-- MESSAGE_SPLIT -->"
 
 
@@ -119,6 +121,28 @@ def _flow_trace_template() -> str:
 @lru_cache(maxsize=1)
 def _change_impact_template() -> str:
     return CHANGE_IMPACT_PROMPT_PATH.read_text(encoding="utf-8")
+
+
+@lru_cache(maxsize=1)
+def _architecture_template() -> str:
+    return ARCHITECTURE_PROMPT_PATH.read_text(encoding="utf-8")
+
+
+def _architecture_from_summary(summary: ArchitectureSummary) -> ArchitectureResponse:
+    folders = summary.top_level_folders
+    return ArchitectureResponse(
+        languages=list(summary.languages),
+        main_folders=folders,
+        frameworks_detected=summary.frameworks_detected,
+        entrypoints=summary.likely_entrypoints,
+        backend_boundary="backend" if "backend" in folders else None,
+        frontend_boundary="frontend" if "frontend" in folders else None,
+        database_layer=None,
+        api_organization="routers" if "routers" in folders else None,
+        auth_locations=["auth"] if "auth" in folders else [],
+        test_locations=summary.test_locations,
+        evidence=[],
+    )
 
 
 class AgentExecutionResult(BaseModel):
@@ -247,6 +271,24 @@ class AgentController:
         context: EvidenceContext,
         trusted_metadata: dict[str, Any],
     ) -> list[Message]:
+        if task_type is TaskType.ARCHITECTURE_EXPLANATION:
+            rendered = (
+                _architecture_template()
+                .replace("{{USER_TASK}}", task)
+                .replace(
+                    "{{ARCHITECTURE_SUMMARY}}",
+                    json.dumps(trusted_metadata["architecture"], sort_keys=True),
+                )
+                .replace(
+                    "{{RESPONSE_SCHEMA}}",
+                    json.dumps(ArchitectureResponse.model_json_schema(), sort_keys=True),
+                )
+            )
+            system_content, user_content = rendered.split(PROMPT_MESSAGE_SPLIT, 1)
+            return [
+                Message(role="system", content=system_content.strip()),
+                Message(role="user", content=user_content.strip()),
+            ]
         if task_type in {TaskType.REPOSITORY_QA, TaskType.EXTERNAL_DOC_QUERY}:
             rendered = (
                 _repository_qa_template()
@@ -368,6 +410,70 @@ class AgentController:
             elif direct is not None:
                 return direct
 
+            if task_type is TaskType.ARCHITECTURE_EXPLANATION:
+                architecture = ArchitectureSummary.model_validate(
+                    await self._execute_tool(
+                        run,
+                        counters,
+                        "inspect_repository",
+                        InspectRepositoryInput(repository_id=repository_id),
+                        ctx,
+                    )
+                )
+                context = self._context_builder.build_from_evidence(
+                    task, task_type, [], [], None
+                )
+                provider = self._providers.get(model_slot)
+                if provider is None:
+                    raise ValueError(f"Model slot {model_slot} is not configured")
+                if self._plan.model_calls < 1 or counters.model_calls >= MAX_MODEL_CALLS:
+                    raise _BoundsExceeded("Model call bound exceeded")
+                counters.model_calls += 1
+                model_started = time.perf_counter()
+                try:
+                    model_result = await provider.complete(
+                        self._prompt(
+                            task,
+                            task_type,
+                            context,
+                            {"architecture": architecture.model_dump(mode="json")},
+                        ),
+                        schema=ArchitectureResponse,
+                        timeout_s=self._timeout_s,
+                    )
+                except Exception as model_error:
+                    await self._hooks.model_execution(
+                        run.id,
+                        model_slot,
+                        provider.model_name,
+                        max(1, int((time.perf_counter() - model_started) * 1000)),
+                        None,
+                        "NOT_VALIDATED",
+                        f"{type(model_error).__name__}: selected model request failed",
+                    )
+                    raise AgentProviderError(run.id) from model_error
+                structured = await self._validate_or_repair(
+                    run,
+                    counters,
+                    model_slot,
+                    provider,
+                    model_result,
+                    ArchitectureResponse,
+                    task_type,
+                    context,
+                )
+                if structured is None:
+                    return await self._complete_run(
+                        run, AgentRunStatus.INVALID_OUTPUT, task_type, None, context
+                    )
+                return await self._complete_run(
+                    run,
+                    AgentRunStatus.OK,
+                    task_type,
+                    _architecture_from_summary(architecture),
+                    context,
+                )
+
             memory_result = await self._execute_tool(
                 run,
                 counters,
@@ -383,16 +489,6 @@ class AgentController:
             trusted_metadata: dict[str, Any] = {
                 "investigation_goal": f"Investigate {task_type.value}: {task}"
             }
-            if task_type is TaskType.ARCHITECTURE_EXPLANATION:
-                architecture = await self._execute_tool(
-                    run,
-                    counters,
-                    "inspect_repository",
-                    InspectRepositoryInput(repository_id=repository_id),
-                    ctx,
-                )
-                trusted_metadata["architecture"] = architecture.model_dump(mode="json")
-
             search_result = await self._execute_tool(
                 run,
                 counters,

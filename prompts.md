@@ -1067,3 +1067,17 @@
 **Resulting module/commit:** `backend/app/agent/prompts/v1/change_impact.md`, `backend/app/agent/investigations/change_impact.py`, `backend/app/agent/controller.py`, `backend/app/api/routes/analysis.py`, `backend/app/ingestion/sync.py`, `backend/app/api/routes/repositories.py`, `backend/app/sources/github.py`, `backend/tests/test_change_impact.py`, and `backend/tests/test_incremental_sync.py`. Changes were left uncommitted.
 
 **Test result:** All 189 backend tests and the existing frontend Vitest test passed. The frontend test required `npm ci --offline` because the tracked `node_modules` contents did not match the lockfile; tracked dependency files were restored after testing to leave unrelated files unchanged. The new tests verify direct versus indirect impact with citations, rejection of fabricated affected items, no-model insufficient-evidence behavior, zero parse/blob/embedding work for an unchanged sync, content-hash embedding reuse, changed/new/deleted index contents, memory staleness and unchanged-memory provenance, sync 409, and ownership enforcement. Docker rebuilt the backend, and `/health` returned HTTP 200.
+
+### 2026-09-24 - Phase 21 architecture explanation
+
+**Prompt:** Implement a versioned architecture prompt using `inspect_repository` metadata; route `ARCHITECTURE_EXPLANATION` directly to inspection and the selected model; add the authenticated `GET /repositories/{id}/architecture` endpoint and MockProvider tests. Keep comparison, other endpoints, and frontend out of scope.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added the architecture prompt, direct inspected-metadata controller path, selected-model invocation, deterministic response-field projection, the authenticated endpoint, and fixture-based tests. The inspection tool now recognizes FastAPI imports in stored Python source as well as dependency manifests.
+
+**Modified/rejected:** The existing `ArchitectureSummary` does not contain database-layer or frontend/backend boundary details for the small fixture. Those response fields remain unset unless the tool reports a corresponding top-level folder. Model-provided factual fields are replaced by values derived from the inspected summary so unsupported claims cannot enter the response.
+
+**Resulting module/commit:** `backend/app/agent/prompts/v1/architecture.md`, `backend/app/agent/controller.py`, `backend/app/api/routes/analysis.py`, `backend/app/tools/repository_tools.py`, and `backend/tests/test_architecture.py`. Changes were left uncommitted.
+
+**Test result:** The full backend suite passed with 260 passed and 2 skipped. The skipped tests are opt-in PostgreSQL/pgvector integration tests requiring `PRISM_TEST_POSTGRES_URL`. The existing frontend Vitest test passed after `npm ci --offline` restored local dependencies. No tracked frontend files changed. `docker compose up -d --build backend` rebuilt the image and started the backend container with PostgreSQL healthy.

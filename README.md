@@ -34,4 +34,4 @@ For direct development, install `backend/requirements.txt` and run `uvicorn app.
 
 Installation state is short-lived, single-use, and bound to the authenticated Prism user who requested the install URL. The callback verifies through a GitHub user access token that the installation is accessible to the GitHub user before persisting it. User and installation tokens are not stored. Do not place the private key, client secret, installation tokens, or user tokens in the frontend, repository, logs, or model context.
 
-Status: Phase 20 complete
+Status: Phase 21 complete

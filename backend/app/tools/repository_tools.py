@@ -1,10 +1,11 @@
+import re
 import uuid
 from collections import Counter
 from functools import lru_cache
 from pathlib import PurePosixPath
 
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
@@ -404,20 +405,29 @@ class InspectRepositoryTool:
             path for path, _, _ in files
             if PurePosixPath(path).name in manifest_names
         ]
-        manifest_contents = (
-            list(await self._session.scalars(
-                select(RepositoryFile.content).where(
-                    RepositoryFile.repository_index_id == index.id,
+        architecture_contents = list((await self._session.execute(
+            select(RepositoryFile.path, RepositoryFile.content).where(
+                RepositoryFile.repository_index_id == index.id,
+                or_(
                     RepositoryFile.path.in_(manifest_paths),
-                )
-            ))
-            if manifest_paths else []
-        )
+                    and_(
+                        RepositoryFile.status == RepositoryFileStatus.OK,
+                        RepositoryFile.language == "python",
+                        RepositoryFile.content.ilike("%fastapi%"),
+                    ),
+                ),
+            )
+        )).all())
         manifest_text = "\n".join(
-            content or "" for content in manifest_contents
+            content or "" for path, content in architecture_contents
+            if path in manifest_paths
         ).lower()
+        source_text = "\n".join(
+            content or "" for path, content in architecture_contents
+            if path not in manifest_paths
+        )
         frameworks: list[str] = []
-        if "fastapi" in manifest_text:
+        if "fastapi" in manifest_text or re.search(r"(?m)^\s*(?:from\s+fastapi\b|import\s+fastapi\b)", source_text):
             frameworks.append("FastAPI")
         if '"react"' in manifest_text or "react==" in manifest_text:
             frameworks.append("React")
