@@ -1,6 +1,8 @@
+from collections.abc import Callable
+
 from pydantic import BaseModel
 
-from app.llm.base import LLMProvider, Message
+from app.llm.base import LLMProvider, LLMResult, Message
 from app.validation.schema_validation import SchemaValidationError, validate_schema
 
 
@@ -9,6 +11,7 @@ async def attempt_repair(
     schema: type[BaseModel],
     validation_error: SchemaValidationError | str,
     llm_provider: LLMProvider,
+    on_result: Callable[[LLMResult], None] | None = None,
 ) -> BaseModel:
     """Make exactly one bounded repair call and validate its response."""
     detail = (
@@ -28,4 +31,6 @@ async def attempt_repair(
         schema=schema,
         timeout_s=60,
     )
+    if on_result is not None:
+        on_result(result)
     return validate_schema(result.content, schema)

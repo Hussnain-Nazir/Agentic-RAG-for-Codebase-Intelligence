@@ -19,7 +19,7 @@ from app.agent.classification import (
 from app.agent.repair import attempt_repair
 from app.evidence.context_builder import ContextBuilder
 from app.evidence.models import Evidence, EvidenceContext, EvidenceQuality, WebEvidenceItem
-from app.llm.base import LLMProvider, Message
+from app.llm.base import LLMProvider, LLMResult, Message
 from app.memory.service import MemoryService, maybe_write_automatic_repository_memory
 from app.models.agent_run import AgentRun, AgentRunStatus
 from app.models.session import Session
@@ -138,18 +138,21 @@ class AgentController:
                 "ERROR",
                 int((time.perf_counter() - started) * 1000),
                 "",
-                str(exc),
+                type(exc).__name__,
             )
             raise
         root = getattr(validated, "root", None)
         summary = f"{len(root)} results" if isinstance(root, list) else validated.__class__.__name__
+        tool_error = (
+            getattr(validated, "error", None) if tool_name == "search_web" else None
+        )
         await self._hooks.post_tool(
             run.id,
             sequence,
-            "OK",
+            "ERROR" if tool_error else "OK",
             int((time.perf_counter() - started) * 1000),
             summary,
-            None,
+            tool_error,
         )
         return validated
 
@@ -228,17 +231,19 @@ class AgentController:
         repository_id: uuid.UUID,
         session_id: uuid.UUID,
     ) -> AgentExecutionResult:
+        if self._user_id is None:
+            raise UnauthorizedRepositoryAccessError("Authenticated user identity is required")
         conversation = await self._session.get(Session, session_id)
         if (
             conversation is None
             or conversation.repository_id != repository_id
-            or (self._user_id is not None and conversation.user_id != self._user_id)
+            or conversation.user_id != self._user_id
         ):
             raise UnauthorizedRepositoryAccessError("Session access denied")
         ctx = ExecutionContext(
             repository_id=repository_id,
             session_id=session_id,
-            user_id=conversation.user_id,
+            user_id=self._user_id,
         )
         await authorize_repository(self._session, repository_id, ctx)
         task_type = classify_task(task)
@@ -345,13 +350,23 @@ class AgentController:
                 structural_evidence.extend(additions)
                 counters.structural_chunks += len(additions)
 
+            repository_only_context = self._context_builder.build_from_evidence(
+                task,
+                task_type,
+                repository_memory,
+                [*repository_evidence, *structural_evidence],
+                None,
+            )
             requested_web = (
                 1
                 if self._plan.web_searches is None
                 and task_type is TaskType.EXTERNAL_DOC_QUERY
                 else max(self._plan.web_searches or 0, 0)
             )
+            if repository_only_context.quality is EvidenceQuality.STRONG:
+                requested_web = 0
             web_evidence: list[WebEvidenceItem] = []
+            web_search_error: str | None = None
             for _ in range(requested_web):
                 if task_type is not TaskType.EXTERNAL_DOC_QUERY:
                     break
@@ -368,6 +383,9 @@ class AgentController:
                     ),
                     ctx,
                 )
+                if web_result.error:
+                    web_search_error = web_result.error
+                    trusted_metadata["web_search_error"] = web_search_error
                 web_evidence.extend(
                     WebEvidenceItem(
                         title=item.title,
@@ -392,11 +410,14 @@ class AgentController:
                 web_evidence,
             )
             if not context.evidence:
+                limitation = "No evidence was available for repository-specific claims."
+                if web_search_error:
+                    limitation += f" External documentation search failed: {web_search_error}."
                 conservative = RepositoryAnswer(
                     answer="Insufficient repository evidence was found.",
                     evidence=[],
                     confidence="low",
-                    limitations="No evidence was available for repository-specific claims.",
+                    limitations=limitation,
                 )
                 return await self._complete_run(run, AgentRunStatus.OK, task_type, conservative, context)
 
@@ -410,6 +431,7 @@ class AgentController:
             if counters.model_calls >= MAX_MODEL_CALLS:
                 raise _BoundsExceeded("Model call bound exceeded")
             counters.model_calls += 1
+            model_started = time.perf_counter()
             try:
                 model_result = await provider.complete(
                     self._prompt(task, task_type, context, trusted_metadata),
@@ -421,10 +443,10 @@ class AgentController:
                     run.id,
                     model_slot,
                     provider.model_name,
-                    0,
+                    max(1, int((time.perf_counter() - model_started) * 1000)),
                     None,
                     "NOT_VALIDATED",
-                    str(model_error),
+                    f"{type(model_error).__name__}: selected model request failed",
                 )
                 raise
             structured = await self._validate_or_repair(
@@ -435,6 +457,12 @@ class AgentController:
                     run, AgentRunStatus.INVALID_OUTPUT, task_type, None, context
                 )
             structured = validate_citations(structured, context).response
+            if web_search_error and isinstance(structured, RepositoryAnswer):
+                limitation = f"External documentation search failed: {web_search_error}."
+                structured.limitations = (
+                    f"{structured.limitations} {limitation}"
+                    if structured.limitations else limitation
+                )
             if requested_model_calls > MAX_MODEL_CALLS:
                 return await self._complete_run(
                     run, AgentRunStatus.BOUNDS_EXCEEDED, task_type, structured, context
@@ -522,32 +550,46 @@ class AgentController:
                 model_result.latency_ms,
                 TokenUsage(model_result.input_tokens, model_result.output_tokens),
                 "INVALID",
-                validation_error.detail,
+                "Model output failed schema validation",
             )
             if counters.repair_attempts >= MAX_REPAIR_ATTEMPTS:
                 return None
             counters.repair_attempts += 1
+            repair_results: list[LLMResult] = []
+            repair_started = time.perf_counter()
             try:
                 structured = await attempt_repair(
-                    model_result.content, schema, validation_error, provider
+                    model_result.content,
+                    schema,
+                    validation_error,
+                    provider,
+                    on_result=repair_results.append,
                 )
             except Exception as repair_error:
+                repair_result = repair_results[0] if repair_results else None
                 await self._hooks.model_execution(
                     run.id,
                     model_slot,
                     provider.model_name,
-                    0,
-                    None,
+                    (
+                        repair_result.latency_ms if repair_result is not None
+                        else max(1, int((time.perf_counter() - repair_started) * 1000))
+                    ),
+                    (
+                        TokenUsage(repair_result.input_tokens, repair_result.output_tokens)
+                        if repair_result is not None else None
+                    ),
                     "INVALID",
-                    str(repair_error),
+                    f"{type(repair_error).__name__}: repair failed",
                 )
                 return None
+            repair_result = repair_results[0]
             await self._hooks.model_execution(
                 run.id,
                 model_slot,
                 provider.model_name,
-                0,
-                None,
+                repair_result.latency_ms,
+                TokenUsage(repair_result.input_tokens, repair_result.output_tokens),
                 "REPAIRED_VALID",
                 None,
             )

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import uuid
 from pathlib import Path
@@ -19,6 +20,7 @@ from app.llm.base import LLMResult
 from app.models import (
     AgentRun,
     AgentRunStatus,
+    CodeChunk,
     ModelExecution,
     Repository,
     RepositoryIndex,
@@ -35,7 +37,8 @@ from app.schemas.responses import (
 )
 from app.sources.upload import UploadedRepositorySource
 from app.tools.registry import ToolRegistry
-from app.tools.schemas import EvidenceList, RelatedFilesInput
+from app.tools.errors import UnauthorizedRepositoryAccessError
+from app.tools.schemas import EvidenceList, RelatedFilesInput, RepositoryQueryInput
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "mini_fastapi"
 
@@ -148,7 +151,57 @@ class FailingModelProvider:
 
     async def complete(self, messages, schema, timeout_s):
         del messages, schema, timeout_s
+        await asyncio.sleep(0.02)
         raise RuntimeError("selected model failed")
+
+
+class FixedSearchTool:
+    name = "search_codebase"
+    description = "Test-only fixed evidence search"
+    input_schema = RepositoryQueryInput
+    output_schema = EvidenceList
+    requires_auth = True
+
+    def __init__(self, evidence: list[Evidence]) -> None:
+        self.evidence = evidence
+
+    async def execute(self, input: BaseModel, ctx) -> BaseModel:
+        del input, ctx
+        return EvidenceList(self.evidence)
+
+
+async def fixed_repository_evidence(session, repository, index, count: int, score: float):
+    chunks = list(
+        await session.scalars(
+            select(CodeChunk).where(CodeChunk.repository_id == repository.id)
+        )
+    )
+    selected = []
+    seen_paths = set()
+    for chunk in chunks:
+        if chunk.file_path not in seen_paths:
+            selected.append(chunk)
+            seen_paths.add(chunk.file_path)
+        if len(selected) == count:
+            break
+    assert len(selected) == count
+    return [
+        Evidence(
+            evidence_id=chunk.id,
+            repository_id=repository.id,
+            repository_index_id=index.id,
+            source_type="CODE",
+            file_path=chunk.file_path,
+            symbol=chunk.symbol_name,
+            start_line=chunk.start_line,
+            end_line=chunk.end_line,
+            content_excerpt=chunk.content,
+            relationship_metadata={},
+            retrieval_metadata={"score": score, "signal": "semantic"},
+            external_source_metadata=None,
+        )
+        for chunk in selected
+    ]
 
 
 @pytest_asyncio.fixture
@@ -246,6 +299,20 @@ async def test_direct_tasks_make_zero_model_calls(orchestration_context, task) -
 
 
 @pytest.mark.asyncio
+async def test_controller_requires_authenticated_user_identity(orchestration_context) -> None:
+    session, _, repository, _, conversation, registry_factory = orchestration_context
+    controller = AgentController(
+        session, {"A": DynamicMockProvider()}, tool_registry=registry_factory()
+    )
+
+    with pytest.raises(UnauthorizedRepositoryAccessError, match="Authenticated user"):
+        await controller.run(
+            "How does authentication work?", "A", repository.id, conversation.id
+        )
+    assert list(await session.scalars(select(AgentRun))) == []
+
+
+@pytest.mark.asyncio
 async def test_repository_qa_calls_one_model_and_persists_trace(
     orchestration_context,
 ) -> None:
@@ -296,24 +363,38 @@ async def test_repository_qa_calls_one_model_and_persists_trace(
 async def test_external_query_uses_web_but_ordinary_qa_does_not(
     orchestration_context,
 ) -> None:
-    session, user, repository, _, conversation, registry_factory = orchestration_context
+    session, user, repository, index, conversation, registry_factory = orchestration_context
     web = FakeWebProvider()
     provider = DynamicMockProvider()
+    strong_registry = registry_factory(web)
+    strong_registry._tools["search_codebase"] = FixedSearchTool(
+        await fixed_repository_evidence(session, repository, index, 3, 0.9)
+    )
     controller = AgentController(
         session,
         {"A": provider},
-        tool_registry=registry_factory(web),
+        tool_registry=strong_registry,
         user_id=user.id,
     )
 
     ordinary = await controller.run(
         "How does authentication work?", "A", repository.id, conversation.id
     )
-    external = await controller.run(
+    strong_external = await controller.run(
         "Compare authentication with official docs",
         "A",
         repository.id,
         conversation.id,
+    )
+    weak_registry = registry_factory(web)
+    weak_registry._tools["search_codebase"] = FixedSearchTool(
+        await fixed_repository_evidence(session, repository, index, 1, 0.2)
+    )
+    weak_controller = AgentController(
+        session, {"A": provider}, tool_registry=weak_registry, user_id=user.id
+    )
+    weak_external = await weak_controller.run(
+        "Compare authentication with official docs", "A", repository.id, conversation.id
     )
 
     ordinary_names = list(
@@ -323,16 +404,59 @@ async def test_external_query_uses_web_but_ordinary_qa_does_not(
             )
         )
     )
-    external_names = list(
+    strong_names = list(
         await session.scalars(
             select(ToolCall.tool_name).where(
-                ToolCall.agent_run_id == external.agent_run_id
+                ToolCall.agent_run_id == strong_external.agent_run_id
+            )
+        )
+    )
+    weak_names = list(
+        await session.scalars(
+            select(ToolCall.tool_name).where(
+                ToolCall.agent_run_id == weak_external.agent_run_id
             )
         )
     )
     assert "search_web" not in ordinary_names
-    assert "search_web" in external_names
+    assert "search_web" not in strong_names
+    assert "search_web" in weak_names
     assert web.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_web_failure_is_traced_and_reported_as_a_limitation(
+    orchestration_context,
+) -> None:
+    class FailingWebProvider:
+        async def search(self, query: str, max_results: int = 5):
+            del query, max_results
+            raise RuntimeError("provider failure details")
+
+    session, user, repository, index, conversation, registry_factory = orchestration_context
+    registry = registry_factory(FailingWebProvider())
+    registry._tools["search_codebase"] = FixedSearchTool(
+        await fixed_repository_evidence(session, repository, index, 1, 0.2)
+    )
+    controller = AgentController(
+        session, {"A": DynamicMockProvider()}, tool_registry=registry, user_id=user.id
+    )
+
+    result = await controller.run(
+        "Compare authentication with official docs", "A", repository.id, conversation.id
+    )
+    web_call = await session.scalar(
+        select(ToolCall).where(
+            ToolCall.agent_run_id == result.agent_run_id,
+            ToolCall.tool_name == "search_web",
+        )
+    )
+
+    assert result.status is AgentRunStatus.OK
+    assert web_call is not None and web_call.status == "ERROR"
+    assert web_call.error == "Web search failed"
+    assert "Web search failed" in result.result["limitations"]
+    assert "provider failure details" not in result.result["limitations"]
 
 
 @pytest.mark.asyncio
@@ -454,11 +578,15 @@ async def test_structural_chunk_bound_stops_at_fifteen(orchestration_context) ->
 
 @pytest.mark.asyncio
 async def test_web_search_bound_stops_after_two(orchestration_context) -> None:
-    session, user, repository, _, conversation, registry_factory = orchestration_context
+    session, user, repository, index, conversation, registry_factory = orchestration_context
+    registry = registry_factory()
+    registry._tools["search_codebase"] = FixedSearchTool(
+        await fixed_repository_evidence(session, repository, index, 1, 0.2)
+    )
     controller = AgentController(
         session,
         {"A": DynamicMockProvider()},
-        tool_registry=registry_factory(),
+        tool_registry=registry,
         user_id=user.id,
         execution_plan=ExecutionPlan(web_searches=3),
     )
@@ -531,6 +659,46 @@ async def test_malformed_output_gets_exactly_one_repair(orchestration_context) -
         "INVALID",
         "REPAIRED_VALID",
     }
+    assert all(item.latency_ms == 1 for item in executions)
+    assert all((item.input_tokens, item.output_tokens) == (10, 20) for item in executions)
+
+
+@pytest.mark.asyncio
+async def test_failed_repair_keeps_returned_model_metrics(orchestration_context) -> None:
+    class AlwaysMalformedProvider:
+        model_name = "malformed-test"
+
+        async def complete(self, messages, schema, timeout_s):
+            del messages, schema, timeout_s
+            return LLMResult(
+                content="{invalid",
+                input_tokens=3,
+                output_tokens=4,
+                latency_ms=7,
+                raw_response={},
+            )
+
+    session, user, repository, _, conversation, registry_factory = orchestration_context
+    controller = AgentController(
+        session,
+        {"A": AlwaysMalformedProvider()},
+        tool_registry=registry_factory(),
+        user_id=user.id,
+    )
+    result = await controller.run(
+        "How does authentication work?", "A", repository.id, conversation.id
+    )
+    executions = list(
+        await session.scalars(
+            select(ModelExecution).where(ModelExecution.agent_run_id == result.agent_run_id)
+        )
+    )
+
+    assert result.status is AgentRunStatus.INVALID_OUTPUT
+    assert len(executions) == 2
+    assert all(item.validation_status == "INVALID" for item in executions)
+    assert all(item.latency_ms == 7 for item in executions)
+    assert all((item.input_tokens, item.output_tokens) == (3, 4) for item in executions)
 
 
 @pytest.mark.asyncio
@@ -558,4 +726,6 @@ async def test_selected_model_failure_is_traced_without_fallback(
     assert run.status is AgentRunStatus.ERROR
     assert execution.model_name == "failing-model"
     assert execution.validation_status == "NOT_VALIDATED"
+    assert execution.latency_ms >= 10
+    assert execution.error == "RuntimeError: selected model request failed"
     assert unused_model_b.calls == 0
