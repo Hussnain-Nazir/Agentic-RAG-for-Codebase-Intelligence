@@ -18,9 +18,11 @@ from app.models.repository_memory import (
     RepositoryMemorySource,
     RepositoryMemoryType,
 )
+from app.models.session import Session
 
 TOKEN_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 AUTOMATIC_MEMORY_TASKS = {"REPOSITORY_QA", "ARCHITECTURE_EXPLANATION"}
+SESSION_MESSAGE_LIMIT = 100
 
 
 class RepositoryMemoryWriter(Protocol):
@@ -51,6 +53,19 @@ def _evidence_strings(evidence_ids: Sequence[uuid.UUID]) -> list[str]:
     return [str(item) for item in evidence_ids]
 
 
+def _durable_source_chunk_ids(evidence: Sequence[Evidence]) -> list[uuid.UUID]:
+    durable: list[uuid.UUID] = []
+    seen: set[uuid.UUID] = set()
+    for item in evidence:
+        raw_ids = item.retrieval_metadata.get("source_chunk_ids") or []
+        source_ids = [uuid.UUID(str(value)) for value in raw_ids] if raw_ids else [item.evidence_id]
+        for source_id in source_ids:
+            if source_id not in seen:
+                seen.add(source_id)
+                durable.append(source_id)
+    return durable
+
+
 class MemoryService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -60,13 +75,15 @@ class MemoryService:
         session_id: uuid.UUID,
         query: str,
     ) -> str:
-        messages = list(
+        recent = list(
             await self._session.scalars(
                 select(Message)
                 .where(Message.session_id == session_id)
-                .order_by(Message.created_at, Message.id)
+                .order_by(Message.created_at.desc(), Message.id.desc())
+                .limit(SESSION_MESSAGE_LIMIT)
             )
         )
+        messages = list(reversed(recent))
         exchanges: list[list[Message]] = []
         current: list[Message] = []
         for message in messages:
@@ -124,9 +141,9 @@ class MemoryService:
         )
         return list(result)
 
-    async def _latest_index_version(self, repository_id: uuid.UUID) -> int:
-        version = await self._session.scalar(
-            select(RepositoryIndex.version)
+    async def _latest_index(self, repository_id: uuid.UUID) -> RepositoryIndex:
+        index = await self._session.scalar(
+            select(RepositoryIndex)
             .where(
                 RepositoryIndex.repository_id == repository_id,
                 RepositoryIndex.state.in_(
@@ -136,9 +153,32 @@ class MemoryService:
             .order_by(RepositoryIndex.version.desc())
             .limit(1)
         )
-        if version is None:
+        if index is None:
             raise ValueError("Repository has no ready index version")
-        return version
+        return index
+
+    async def _validate_evidence_ids(
+        self,
+        repository_id: uuid.UUID,
+        evidence_ids: Sequence[uuid.UUID],
+        repository_index_version: int | None = None,
+    ) -> int:
+        index = await self._latest_index(repository_id)
+        if repository_index_version is not None and repository_index_version != index.version:
+            raise ValueError("Evidence must belong to the current repository index")
+        requested = {uuid.UUID(str(value)) for value in evidence_ids}
+        matched = set(
+            await self._session.scalars(
+                select(CodeChunk.id).where(
+                    CodeChunk.repository_id == repository_id,
+                    CodeChunk.repository_index_id == index.id,
+                    CodeChunk.id.in_(requested),
+                )
+            )
+        )
+        if matched != requested:
+            raise ValueError("Evidence IDs must resolve in the current repository index")
+        return index.version
 
     async def save_repository_memory(
         self,
@@ -155,8 +195,8 @@ class MemoryService:
     ) -> RepositoryMemory:
         if not evidence_ids:
             raise ValueError("Repository memory requires at least one evidence_id")
-        version = repository_index_version or await self._latest_index_version(
-            repository_id
+        version = await self._validate_evidence_ids(
+            repository_id, evidence_ids, repository_index_version
         )
         item = RepositoryMemory(
             repository_id=repository_id,
@@ -221,6 +261,13 @@ class MemoryService:
     ) -> Finding:
         if not evidence_ids:
             raise ValueError("A saved finding requires at least one evidence_id")
+        await self._validate_evidence_ids(repository_id, evidence_ids)
+        if session_id is not None:
+            session_repository_id = await self._session.scalar(
+                select(Session.repository_id).where(Session.id == session_id)
+            )
+            if session_repository_id != repository_id:
+                raise ValueError("Finding session must belong to the repository")
         finding_type = FindingType(_enum_value(type))
         serialized = (
             content.model_dump(mode="json")
@@ -266,7 +313,7 @@ async def maybe_write_automatic_repository_memory(
         repository_id,
         memory_type,
         content,
-        [item.evidence_id for item in code_evidence],
+        _durable_source_chunk_ids(code_evidence),
         RepositoryMemorySource.AUTO,
         repository_index_version=repository_index_version,
         topic=topic or normalized_task.lower(),

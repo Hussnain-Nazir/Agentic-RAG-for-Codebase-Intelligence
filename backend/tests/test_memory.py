@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -32,6 +33,7 @@ from app.models import (
     Session,
     User,
 )
+from app.retrieval.models import RankedChunk
 
 
 @pytest_asyncio.fixture
@@ -192,6 +194,116 @@ async def test_invalidate_stale_only_marks_changed_file_memories(
 
 
 @pytest.mark.asyncio
+async def test_merged_evidence_saves_durable_chunks_and_stales_on_file_change(
+    session_factory,
+) -> None:
+    async with session_factory() as session:
+        _, repository, index = await make_repository(session)
+        first = await add_chunk(session, repository, index, "auth.py", "first auth step")
+        second = CodeChunk(
+            repository_id=repository.id,
+            repository_index_id=index.id,
+            file_id=first.file_id,
+            file_path="auth.py",
+            language="python",
+            chunk_type=CodeChunkType.FUNCTION,
+            symbol_name="second",
+            symbol_type="FUNCTION",
+            start_line=2,
+            end_line=2,
+            content="second auth step",
+            content_hash=uuid.uuid4().hex * 2,
+            embedding=None,
+            chunk_metadata={"source_type": "CODE"},
+        )
+        session.add(second)
+        await session.flush()
+        context = ContextBuilder().build(
+            "auth",
+            "REPOSITORY_QA",
+            [],
+            [
+                RankedChunk(chunk=first, raw_score=0.9, signal="semantic"),
+                RankedChunk(chunk=second, raw_score=0.8, signal="semantic"),
+            ],
+            [],
+        )
+        assert len(context.evidence) == 1
+        merged = context.evidence[0]
+        assert merged.evidence_id not in {first.id, second.id}
+        assert set(merged.retrieval_metadata["source_chunk_ids"]) == {
+            str(first.id), str(second.id)
+        }
+
+        memory = await maybe_write_automatic_repository_memory(
+            MemoryService(session),
+            repository_id=repository.id,
+            task_type="REPOSITORY_QA",
+            confidence="high",
+            content="Authentication follows two steps.",
+            evidence=context.evidence,
+        )
+        assert memory is not None
+        assert set(memory.evidence_ids) == {str(first.id), str(second.id)}
+        assert await MemoryService(session).invalidate_stale(repository.id, ["auth.py"]) == 1
+        assert memory.is_stale is True
+
+
+@pytest.mark.asyncio
+async def test_memory_and_finding_reject_foreign_or_stale_evidence_ids(session_factory) -> None:
+    async with session_factory() as session:
+        _, repository, index = await make_repository(session)
+        other_user, other_repository, other_index = await make_repository(session)
+        valid = await add_chunk(session, repository, index, "valid.py", "valid")
+        foreign = await add_chunk(session, other_repository, other_index, "foreign.py", "foreign")
+        service = MemoryService(session)
+
+        valid_finding = await service.save_finding(
+            repository.id, FindingType.IMPACT, {"title": "Valid"}, [valid.id], None
+        )
+        assert valid_finding.evidence_ids == [str(valid.id)]
+        foreign_session = Session(user_id=other_user.id, repository_id=other_repository.id)
+        session.add(foreign_session)
+        await session.flush()
+        with pytest.raises(ValueError, match="session must belong"):
+            await service.save_finding(
+                repository.id, FindingType.IMPACT, {"title": "Wrong session"},
+                [valid.id], foreign_session.id,
+            )
+
+        for invalid_id in (uuid.uuid4(), foreign.id):
+            with pytest.raises(ValueError, match="current repository index"):
+                await service.save_repository_memory(
+                    repository.id, "FACT", "Invalid provenance", [invalid_id], "EXPLICIT"
+                )
+            with pytest.raises(ValueError, match="current repository index"):
+                await service.save_finding(
+                    repository.id, FindingType.IMPACT, {"title": "Invalid"}, [invalid_id], None
+                )
+        with pytest.raises(ValueError, match="current repository index"):
+            await service.save_repository_memory(
+                repository.id,
+                "FACT",
+                "Old version",
+                [valid.id],
+                "EXPLICIT",
+                repository_index_version=index.version + 1,
+            )
+        next_index = RepositoryIndex(
+            repository_id=repository.id,
+            version=index.version + 1,
+            revision="new-version",
+            state=RepositoryIndexState.READY,
+        )
+        session.add(next_index)
+        await session.flush()
+        with pytest.raises(ValueError, match="current repository index"):
+            await service.save_repository_memory(
+                repository.id, "FACT", "Old evidence", [valid.id], "EXPLICIT"
+            )
+
+
+@pytest.mark.asyncio
 async def test_save_finding_rejects_zero_evidence_ids(session_factory) -> None:
     async with session_factory() as session:
         _, repository, _ = await make_repository(session)
@@ -317,3 +429,49 @@ async def test_session_memory_returns_last_three_relevant_exchanges(
         assert "question 1" in summary
         assert "question 2" in summary
         assert "question 3" in summary
+
+
+@pytest.mark.asyncio
+async def test_session_memory_bounds_the_database_message_query(session_factory) -> None:
+    async with session_factory() as session:
+        user, repository, _ = await make_repository(session)
+        conversation = Session(user_id=user.id, repository_id=repository.id)
+        session.add(conversation)
+        await session.flush()
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        for number in range(60):
+            session.add_all(
+                [
+                    Message(
+                        session_id=conversation.id,
+                        role=MessageRole.USER,
+                        content=f"Authentication question {number}",
+                        created_at=start + timedelta(minutes=number * 2),
+                    ),
+                    Message(
+                        session_id=conversation.id,
+                        role=MessageRole.ASSISTANT,
+                        content=f"Authentication answer {number}",
+                        created_at=start + timedelta(minutes=number * 2 + 1),
+                    ),
+                ]
+            )
+        await session.flush()
+        statements: list[str] = []
+
+        def record_message_select(conn, cursor, statement, parameters, context, executemany):
+            del conn, cursor, parameters, context, executemany
+            if "from messages" in statement.lower():
+                statements.append(statement.lower())
+
+        event.listen(session.bind.sync_engine, "before_cursor_execute", record_message_select)
+        try:
+            summary = await MemoryService(session).retrieve_session_memory(
+                conversation.id, "authentication"
+            )
+        finally:
+            event.remove(session.bind.sync_engine, "before_cursor_execute", record_message_select)
+
+        assert statements and all(" limit " in statement for statement in statements)
+        assert "question 56" not in summary
+        assert all(f"question {number}" in summary for number in (57, 58, 59))
