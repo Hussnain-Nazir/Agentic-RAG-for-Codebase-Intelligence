@@ -405,7 +405,8 @@ async def sync_repository(
     embedding_provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> RepositorySyncResponse:
-    del repository
+    installation_id = repository.github_installation_id
+    github_repo_id = repository.github_repo_id
     try:
         index = await synchronize_repository(
             repository_id,
@@ -418,6 +419,26 @@ async def sync_repository(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except SyncUnavailableError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except GitHubInstallationRevoked as exc:
+        if installation_id is not None:
+            await _mark_installation_revoked(db, installation_id)
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except GitHubAccessLost as exc:
+        if installation_id is not None:
+            await _mark_repository_access(
+                db, installation_id, github_repo_id, RepositoryAccessStatus.ACCESS_LOST
+            )
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except GitHubRepositoryDeleted as exc:
+        if installation_id is not None:
+            await _mark_repository_access(
+                db, installation_id, github_repo_id, RepositoryAccessStatus.SOURCE_DELETED
+            )
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except GitHubBranchMissing as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except GitHubRateLimited as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except GitHubApiError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return RepositorySyncResponse(index_id=index.id, state=index.state)

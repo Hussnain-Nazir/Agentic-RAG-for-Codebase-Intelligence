@@ -17,13 +17,22 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.config import get_settings
 from app.ingestion.sync import SyncInProgressError, synchronize_repository
+from app.github.errors import (
+    GitHubAccessLost,
+    GitHubBranchMissing,
+    GitHubInstallationRevoked,
+    GitHubRateLimited,
+    GitHubRepositoryDeleted,
+)
 from app.memory.service import MemoryService
 from app.models import (
     CodeChunk,
     CodeRelationship,
     CodeSymbol,
     GitHubInstallation,
+    GitHubInstallationStatus,
     Repository,
+    RepositoryAccessStatus,
     RepositoryFile,
     RepositoryIndex,
     RepositoryIndexState,
@@ -382,6 +391,33 @@ async def test_changed_sha_with_identical_content_reuses_embedding(sync_context)
 
 
 @pytest.mark.asyncio
+async def test_failed_sync_marks_new_index_failed_without_expired_attribute_access(
+    sync_context,
+) -> None:
+    factory, client, embedding, settings, repository_id, _ = sync_context
+    client.revision = "missing-tree"
+
+    async with factory() as session:
+        with pytest.raises(KeyError):
+            await synchronize_repository(
+                repository_id,
+                session=session,
+                github_client=client,
+                embedding_provider=embedding,
+                settings=settings,
+            )
+        failed = await session.scalar(
+            select(RepositoryIndex).where(
+                RepositoryIndex.repository_id == repository_id,
+                RepositoryIndex.version == 2,
+            )
+        )
+        assert failed is not None
+        assert failed.state is RepositoryIndexState.FAILED
+        assert failed.failure_reason == "Synchronization failed: KeyError"
+
+
+@pytest.mark.asyncio
 async def test_sync_endpoint_rejects_active_job_with_409(sync_context) -> None:
     factory, client, embedding, settings, repository_id, _ = sync_context
     async with factory() as session:
@@ -475,3 +511,56 @@ async def test_sync_endpoint_returns_new_index(sync_context) -> None:
     assert response.status_code == 200
     assert response.json()["state"] == "READY"
     assert uuid.UUID(response.json()["index_id"]) != old_index_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error_type", "expected_status", "expected_access"),
+    [
+        (GitHubInstallationRevoked, 401, RepositoryAccessStatus.ACCESS_LOST),
+        (GitHubAccessLost, 403, RepositoryAccessStatus.ACCESS_LOST),
+        (GitHubRepositoryDeleted, 404, RepositoryAccessStatus.SOURCE_DELETED),
+        (GitHubBranchMissing, 404, RepositoryAccessStatus.ACTIVE),
+        (GitHubRateLimited, 429, RepositoryAccessStatus.ACTIVE),
+    ],
+)
+async def test_sync_endpoint_maps_typed_github_lifecycle_errors(
+    sync_context, monkeypatch, error_type, expected_status, expected_access
+) -> None:
+    factory, client, embedding, settings, repository_id, _ = sync_context
+    async with factory() as session:
+        user = await session.scalar(select(User))
+        assert user is not None
+
+    async def fail_revision(installation_id, github_repo_id, branch):
+        del installation_id, github_repo_id, branch
+        raise error_type("GitHub source unavailable")
+
+    monkeypatch.setattr(client, "get_branch_revision", fail_revision)
+
+    async def override_db() -> AsyncIterator:
+        async with factory() as session:
+            yield session
+
+    app = create_app()
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_github_client] = lambda: client
+    app.dependency_overrides[get_embedding_provider] = lambda: embedding
+    app.dependency_overrides[get_settings] = lambda: settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as http:
+        response = await http.post(f"/repositories/{repository_id}/sync")
+    assert response.status_code == expected_status
+
+    async with factory() as session:
+        repository = await session.get(Repository, repository_id)
+        installation = await session.scalar(select(GitHubInstallation))
+        assert repository is not None and repository.access_status is expected_access
+        assert installation is not None
+        assert installation.status is (
+            GitHubInstallationStatus.REVOKED
+            if error_type is GitHubInstallationRevoked
+            else GitHubInstallationStatus.ACTIVE
+        )

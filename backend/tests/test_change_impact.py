@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.llm.mock import MockProvider
 from app.agent.investigations.change_impact import (
     ChangeImpactState,
+    _preferred_references,
     investigate_change_impact,
 )
 from app.evidence.models import Evidence
@@ -190,7 +191,7 @@ def test_change_impact_prefers_calls_over_imports_for_list_items(qa_context) -> 
 
     relationships = asyncio.run(stored_relationships())
     assert ("list_items", "CALLS", "get_current_user") in relationships
-    assert ("list_items", "IMPORTS", "get_current_user") in relationships
+    assert ("<module>", "IMPORTS", "get_current_user") in relationships
 
     provider_box["provider"] = MockProvider(callback=_impact_response)
     response = client.post(
@@ -209,6 +210,23 @@ def test_change_impact_prefers_calls_over_imports_for_list_items(qa_context) -> 
     assert "CALLS" in indirect["create_item"].reason
     assert indirect["list_items"].evidence_ids
     assert indirect["create_item"].evidence_ids
+
+
+def test_duplicate_reference_observations_keep_calls_over_imports() -> None:
+    references = [
+        CodeReference(
+            file="routers/items.py",
+            symbol="list_items",
+            line=5,
+            relationship_kind=kind,
+            confidence="low",
+        )
+        for kind in ("CALLS", "IMPORTS")
+    ]
+
+    preferred = _preferred_references(references, set())
+
+    assert preferred[("routers/items.py", "list_items")].relationship_kind == "CALLS"
 
 
 def test_change_impact_rejects_fabricated_affected_area(qa_context) -> None:

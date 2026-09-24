@@ -65,6 +65,9 @@ class _SelectedSource:
     async def get_file_content(self, ref: str, path: str) -> bytes:
         return await self.source.get_file_content(ref, path)
 
+    async def get_file_prefix(self, ref: str, path: str, max_bytes: int) -> bytes:
+        return await self.source.get_file_prefix(ref, path, max_bytes)
+
     async def get_revision(self, ref: str) -> str:
         return await self.source.get_revision(ref)
 
@@ -221,6 +224,8 @@ async def synchronize_repository(
             state=RepositoryIndexState.PENDING,
         )
         session.add(index)
+        await session.flush()
+        index_id = index.id
         await session.commit()
         try:
             index.state = RepositoryIndexState.DISCOVERING
@@ -422,7 +427,7 @@ async def synchronize_repository(
             return index
         except Exception as exc:
             await session.rollback()
-            failed = await session.get(RepositoryIndex, index.id)
+            failed = await session.get(RepositoryIndex, index_id)
             if failed is not None:
                 failed.state = RepositoryIndexState.FAILED
                 failed.failure_reason = f"Synchronization failed: {type(exc).__name__}"

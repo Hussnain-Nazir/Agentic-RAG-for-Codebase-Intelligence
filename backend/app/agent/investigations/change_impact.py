@@ -9,6 +9,7 @@ from app.agent.investigations.flow_trace import select_entry_symbol
 from app.evidence.models import Evidence
 from app.schemas.responses import ChangeImpactResponse, ImpactItem
 from app.tools.schemas import (
+    CodeReference,
     FindReferencesInput,
     FindSymbolInput,
     RelatedFilesInput,
@@ -91,6 +92,22 @@ def _supporting(evidence: list[Evidence], file: str, symbol: str) -> list[uuid.U
     ]
 
 
+def _preferred_references(
+    references: list[CodeReference], direct_keys: set[tuple[str, str]]
+) -> dict[tuple[str, str], CodeReference]:
+    preferred: dict[tuple[str, str], CodeReference] = {}
+    for reference in references:
+        key = (reference.file, reference.symbol)
+        if key in direct_keys:
+            continue
+        previous = preferred.get(key)
+        if previous is None or RELATIONSHIP_PRIORITY.get(
+            reference.relationship_kind, 0
+        ) > RELATIONSHIP_PRIORITY.get(previous.relationship_kind, 0):
+            preferred[key] = reference
+    return preferred
+
+
 async def investigate_change_impact(
     task: str,
     repository_id: uuid.UUID,
@@ -147,16 +164,9 @@ async def investigate_change_impact(
                     reason="Defines the symbol named in the requested change.",
                     evidence_ids=ids,
                 )
-        preferred_references = {}
-        for reference in getattr(references, "root", []):
-            key = (reference.file, reference.symbol)
-            if key in state.directly_affected:
-                continue
-            previous = preferred_references.get(key)
-            if previous is None or RELATIONSHIP_PRIORITY.get(
-                reference.relationship_kind, 0
-            ) > RELATIONSHIP_PRIORITY.get(previous.relationship_kind, 0):
-                preferred_references[key] = reference
+        preferred_references = _preferred_references(
+            list(getattr(references, "root", [])), set(state.directly_affected)
+        )
         for key, reference in preferred_references.items():
             ids = _supporting(state.evidence, reference.file, reference.symbol)
             if ids:
