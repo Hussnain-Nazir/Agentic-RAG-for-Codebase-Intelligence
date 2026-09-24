@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -39,6 +39,7 @@ from app.tools.errors import (
     UnauthorizedRepositoryAccessError,
 )
 from app.tools.registry import ToolRegistry
+from app.tools.repository_tools import SearchCodebaseTool
 from app.tools.schemas import (
     FindReferencesInput,
     FindSymbolInput,
@@ -244,6 +245,75 @@ async def test_retrieval_symbol_reference_and_related_tools(tool_context) -> Non
 
 
 @pytest.mark.asyncio
+async def test_search_tool_reuses_lazily_constructed_embedding_provider(
+    tool_context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session, _, ctx, repository, _, _, _ = tool_context
+    provider = FakeEmbeddingProvider()
+    constructed: list[str] = []
+
+    def cached_provider(model_name: str) -> FakeEmbeddingProvider:
+        constructed.append(model_name)
+        return provider
+
+    monkeypatch.setattr(
+        "app.tools.repository_tools._cached_local_embedding_provider", cached_provider
+    )
+    tool = SearchCodebaseTool(
+        session,
+        settings=Settings(database_url="sqlite+aiosqlite://", embedding_model_name="test-model"),
+    )
+    for _ in range(2):
+        result = await tool.execute(
+            RepositoryQueryInput(repository_id=repository.id, query="create_access_token"),
+            ctx,
+        )
+        assert result.root
+    assert constructed == ["test-model"]
+
+
+@pytest.mark.asyncio
+async def test_repository_tools_push_lookups_and_filters_into_scoped_queries(tool_context) -> None:
+    session, registry, ctx, repository, _, _, _ = tool_context
+    statements: list[str] = []
+
+    def record_query(conn, cursor, statement, parameters, context, executemany):
+        del conn, cursor, parameters, context, executemany
+        statements.append(statement.lower())
+
+    event.listen(session.bind.sync_engine, "before_cursor_execute", record_query)
+    try:
+        await registry.get("find_references").execute(
+            FindReferencesInput(repository_id=repository.id, symbol_name="create_access_token"),
+            ctx,
+        )
+        reference_statements = list(statements)
+        statements.clear()
+        await registry.get("inspect_repository").execute(
+            InspectRepositoryInput(repository_id=repository.id), ctx
+        )
+        architecture_statements = list(statements)
+        statements.clear()
+        await registry.get("get_review_history").execute(
+            ReviewHistoryInput(repository_id=repository.id, category="maintainability"),
+            ctx,
+        )
+        review_statements = list(statements)
+    finally:
+        event.remove(session.bind.sync_engine, "before_cursor_execute", record_query)
+
+    assert sum("from code_symbols" in query for query in reference_statements) <= 2
+    assert sum("from repository_files" in query for query in reference_statements) <= 1
+    file_queries = [
+        query for query in architecture_statements if "from repository_files" in query
+    ]
+    assert len(file_queries) == 2
+    assert "repository_files.content" not in file_queries[0]
+    assert "repository_files.content" in file_queries[1]
+    assert any("json_extract" in query for query in review_statements)
+
+
+@pytest.mark.asyncio
 async def test_file_and_architecture_tools_have_real_happy_paths(tool_context) -> None:
     _, registry, ctx, repository, _, _, _ = tool_context
 
@@ -264,7 +334,10 @@ async def test_file_and_architecture_tools_have_real_happy_paths(tool_context) -
     )
 
     assert "def login" in file_content.content
-    assert file_range.content == "from fastapi import APIRouter, HTTPException\n\n"
+    expected_lines = (FIXTURE_ROOT / "routers" / "auth.py").read_bytes().decode(
+        "utf-8"
+    ).splitlines(keepends=True)[:2]
+    assert file_range.content == "".join(expected_lines)
     assert architecture.frameworks_detected == ["FastAPI", "React", "Vite"]
     assert "src/main.tsx" in architecture.likely_entrypoints
     assert "tests/test_auth.py" in architecture.test_locations
@@ -311,6 +384,7 @@ async def test_memory_and_review_tools_have_real_happy_paths(tool_context) -> No
     assert "Authentication uses access tokens" in session_memory.root[0].content
     assert saved.evidence_ids == [auth_chunk.id]
     assert saved.source == "EXPLICIT"
+    assert saved.topic == "Login creates an access token"
     assert reviews.root[0].content["category"] == "maintainability"
 
 

@@ -1,12 +1,13 @@
 import uuid
 from collections import Counter
+from functools import lru_cache
 from pathlib import PurePosixPath
 
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import Settings
+from app.config import Settings, get_settings
 from app.embeddings.base import EmbeddingProvider
 from app.embeddings.local_provider import LocalEmbeddingProvider
 from app.evidence.builder import build_evidence
@@ -47,8 +48,9 @@ from app.tools.schemas import (
 )
 
 
-def _enum_value(value) -> str:
-    return str(getattr(value, "value", value))
+@lru_cache(maxsize=4)
+def _cached_local_embedding_provider(model_name: str) -> LocalEmbeddingProvider:
+    return LocalEmbeddingProvider(model_name=model_name)
 
 
 class SearchCodebaseTool:
@@ -72,9 +74,12 @@ class SearchCodebaseTool:
         request = RepositoryQueryInput.model_validate(input)
         await authorize_repository(self._session, request.repository_id, ctx)
         index = await current_repository_index(self._session, request.repository_id)
-        provider = self._embedding_provider or LocalEmbeddingProvider(
-            settings=self._settings
-        )
+        if self._embedding_provider is None:
+            configured = self._settings or get_settings()
+            self._embedding_provider = _cached_local_embedding_provider(
+                configured.embedding_model_name
+            )
+        provider = self._embedding_provider
         ranked = await HybridRetriever(
             session=self._session,
             embedding_provider=provider,
@@ -193,12 +198,33 @@ class FindReferencesTool:
                 )
             )
         )
+        if not relationships:
+            return CodeReferenceList([])
+        source_ids = {item.from_symbol_id for item in relationships}
+        sources = {
+            item.id: item
+            for item in await self._session.scalars(
+                select(CodeSymbol).where(
+                    CodeSymbol.repository_index_id == index.id,
+                    CodeSymbol.id.in_(source_ids),
+                )
+            )
+        }
+        files = {
+            item.id: item
+            for item in await self._session.scalars(
+                select(RepositoryFile).where(
+                    RepositoryFile.repository_index_id == index.id,
+                    RepositoryFile.id.in_({item.file_id for item in sources.values()}),
+                )
+            )
+        }
         references: list[CodeReference] = []
         for relationship in relationships:
-            source = await self._session.get(CodeSymbol, relationship.from_symbol_id)
+            source = sources.get(relationship.from_symbol_id)
             if source is None:
                 continue
-            file = await self._session.get(RepositoryFile, source.file_id)
+            file = files.get(source.file_id)
             if file is None:
                 continue
             references.append(
@@ -272,29 +298,40 @@ class InspectRepositoryTool:
         await authorize_repository(self._session, request.repository_id, ctx)
         index = await current_repository_index(self._session, request.repository_id)
         files = list(
-            await self._session.scalars(
-                select(RepositoryFile)
+            (await self._session.execute(
+                select(RepositoryFile.path, RepositoryFile.language, RepositoryFile.status)
                 .where(RepositoryFile.repository_index_id == index.id)
                 .order_by(RepositoryFile.path)
-            )
+            )).all()
         )
         languages = Counter(
-            file.language
-            for file in files
-            if file.language and file.status is RepositoryFileStatus.OK
+            language
+            for _, language, file_status in files
+            if language and file_status is RepositoryFileStatus.OK
         )
         folders = sorted(
             {
-                PurePosixPath(file.path).parts[0]
-                for file in files
-                if len(PurePosixPath(file.path).parts) > 1
+                PurePosixPath(path).parts[0]
+                for path, _, _ in files
+                if len(PurePosixPath(path).parts) > 1
             }
         )
+        manifest_names = {"package.json", "requirements.txt", "pyproject.toml"}
+        manifest_paths = [
+            path for path, _, _ in files
+            if PurePosixPath(path).name in manifest_names
+        ]
+        manifest_contents = (
+            list(await self._session.scalars(
+                select(RepositoryFile.content).where(
+                    RepositoryFile.repository_index_id == index.id,
+                    RepositoryFile.path.in_(manifest_paths),
+                )
+            ))
+            if manifest_paths else []
+        )
         manifest_text = "\n".join(
-            file.content or ""
-            for file in files
-            if PurePosixPath(file.path).name
-            in {"package.json", "requirements.txt", "pyproject.toml"}
+            content or "" for content in manifest_contents
         ).lower()
         frameworks: list[str] = []
         if "fastapi" in manifest_text:
@@ -312,18 +349,18 @@ class InspectRepositoryTool:
             "src/main.tsx",
         }
         entrypoints = sorted(
-            file.path
-            for file in files
-            if file.path in entry_names
-            or PurePosixPath(file.path).name in {"app.py", "main.py"}
+            path
+            for path, _, _ in files
+            if path in entry_names
+            or PurePosixPath(path).name in {"app.py", "main.py"}
         )
         tests = sorted(
-            file.path
-            for file in files
-            if PurePosixPath(file.path).name.startswith("test_")
-            or ".test." in PurePosixPath(file.path).name
-            or ".spec." in PurePosixPath(file.path).name
-            or "tests" in PurePosixPath(file.path).parts
+            path
+            for path, _, _ in files
+            if PurePosixPath(path).name.startswith("test_")
+            or ".test." in PurePosixPath(path).name
+            or ".spec." in PurePosixPath(path).name
+            or "tests" in PurePosixPath(path).parts
         )
         return ArchitectureSummary(
             repository_id=request.repository_id,
@@ -420,7 +457,6 @@ class SaveMemoryTool:
             request.content,
             request.evidence_ids,
             RepositoryMemorySource.EXPLICIT,
-            topic=request.type.lower(),
         )
         return MemoryResult(
             id=row.id,
@@ -450,22 +486,19 @@ class GetReviewHistoryTool:
     async def execute(self, input: BaseModel, ctx: ExecutionContext) -> BaseModel:
         request = ReviewHistoryInput.model_validate(input)
         await authorize_repository(self._session, request.repository_id, ctx)
-        rows = list(
-            await self._session.scalars(
-                select(Finding)
-                .where(
-                    Finding.repository_id == request.repository_id,
-                    Finding.type == FindingType.REVIEW,
-                )
-                .order_by(Finding.created_at.desc(), Finding.id)
-            )
+        statement = select(Finding).where(
+            Finding.repository_id == request.repository_id,
+            Finding.type == FindingType.REVIEW,
         )
         if request.category is not None:
-            rows = [
-                row
-                for row in rows
-                if str(row.content.get("category", "")) == request.category
-            ]
+            statement = statement.where(
+                Finding.content["category"].as_string() == request.category
+            )
+        rows = list(
+            await self._session.scalars(
+                statement.order_by(Finding.created_at.desc(), Finding.id)
+            )
+        )
         return FindingResultList(
             [
                 FindingResult(
