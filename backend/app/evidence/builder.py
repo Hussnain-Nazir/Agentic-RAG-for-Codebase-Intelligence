@@ -16,7 +16,10 @@ def _relationship_metadata(candidate: RankedChunk) -> dict[str, Any]:
     stored = candidate.chunk.chunk_metadata.get("relationship_metadata")
     if isinstance(stored, dict):
         metadata.update(stored)
-    for key in ("api_routes", "route_path", "relationship_kind"):
+    for key in (
+        "api_routes", "route_path", "relationship_kind", "calls", "direct_calls",
+        "contained_symbol_calls",
+    ):
         if key in candidate.chunk.chunk_metadata:
             metadata[key] = candidate.chunk.chunk_metadata[key]
     if candidate.chunk.parent_symbol:

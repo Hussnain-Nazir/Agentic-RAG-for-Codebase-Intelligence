@@ -349,8 +349,10 @@ class GetRelatedFilesTool:
                     edges.append(
                         {
                             "source_symbol": source.name,
+                            "source_symbol_id": str(source.id),
                             "source_file": files_by_id.get(source.file_id),
                             "target_symbol": target.name,
+                            "target_symbol_id": str(target.id),
                             "target_file": files_by_id.get(target.file_id),
                             "target_start_line": target.start_line,
                             "target_end_line": target.end_line,

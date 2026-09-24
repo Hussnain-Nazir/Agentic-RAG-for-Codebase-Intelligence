@@ -184,6 +184,16 @@ def merge_tiny_adjacent(chunks: list[ChunkDraft], source_lines: list[str]) -> li
                 content=content,
                 metadata={
                     "merged_symbols": [item.symbol_name for item in pending],
+                    "contained_symbol_calls": [
+                        {
+                            "name": item.symbol_name,
+                            "start_line": item.metadata.get("original_start_line", item.start_line),
+                            "calls": list(item.metadata.get("calls", [])),
+                            "direct_calls": list(item.metadata.get("direct_calls", [])),
+                        }
+                        for item in pending
+                        if item.symbol_name
+                    ],
                     "source_type": first.source_type,
                 },
                 source_type=first.source_type,

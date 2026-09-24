@@ -448,6 +448,7 @@ class AgentController:
                     repository_id,
                     execute_flow_tool,
                     flow_state,
+                    available_tool_calls=MAX_TOOL_ITERATIONS - counters.tool_iterations,
                 )
                 trusted_metadata["flow_graph"] = flow_state.as_metadata()
                 repository_ids = {
@@ -666,11 +667,17 @@ class AgentController:
             await self._save_automatic_memory(repository_id, task_type, structured, context)
             return await self._complete_run(run, AgentRunStatus.OK, task_type, structured, context)
         except _BoundsExceeded:
+            gathered_evidence = [
+                *locals().get("repository_evidence", []),
+                *locals().get("structural_evidence", []),
+            ]
+            if task_type is TaskType.FLOW_TRACE:
+                gathered_evidence.extend(flow_state.evidence)
             context = self._context_builder.build_from_evidence(
                 task,
                 task_type,
                 [],
-                locals().get("repository_evidence", []) + locals().get("structural_evidence", []),
+                gathered_evidence,
                 locals().get("web_evidence", []),
             )
             partial = (

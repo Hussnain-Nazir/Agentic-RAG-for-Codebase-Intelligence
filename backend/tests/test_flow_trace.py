@@ -14,7 +14,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from app.agent.controller import AgentController, ExecutionPlan
+from app.agent.controller import AgentController, ExecutionPlan, _BoundsExceeded
+from app.agent.investigations.flow_trace import (
+    FlowInvestigationState,
+    deterministic_flow_trace,
+    investigate_flow_trace,
+)
 from app.api.routes.analysis import get_analysis_providers, get_analysis_tool_registry
 from app.api.routes.repositories import _persist_repository, get_embedding_provider
 from app.auth.dependencies import get_current_user
@@ -22,13 +27,14 @@ from app.config import Settings, get_settings
 from app.db.base import Base
 from app.db.session import get_db
 from app.evidence.context_builder import ContextBuilder
-from app.evidence.models import EvidenceQuality
+from app.evidence.models import Evidence, EvidenceQuality
 from app.llm.mock import MockProvider
 from app.main import create_app
 from app.models import (
     AgentRunStatus,
     ModelExecution,
     Repository,
+    RepositoryIndex,
     Session,
     ToolCall,
     User,
@@ -37,7 +43,13 @@ from app.schemas.responses import FlowTraceResponse
 from app.sources.upload import UploadedRepositorySource
 from app.tools.base import ExecutionContext
 from app.tools.registry import ToolRegistry
-from app.tools.schemas import RepositoryQueryInput
+from app.tools.schemas import (
+    CodeReferenceList,
+    CodeSymbolList,
+    CodeSymbolResult,
+    EvidenceList,
+    RepositoryQueryInput,
+)
 
 SOURCE_FIXTURE = Path(__file__).parent / "fixtures" / "mini_fastapi"
 GENERAL_FIXTURE = Path(__file__).parent / "fixtures" / "flow_general"
@@ -313,6 +325,7 @@ def test_known_flow_is_ordered_and_observation_backed(flow_context) -> None:
     assert observed["path"] == [
         "login",
         "create_access_token",
+        "sha256",
         "verify_password",
     ]
     assert all(edge["kind"] != "IMPORTS" for edge in observed["edges"])
@@ -323,17 +336,21 @@ def test_known_flow_is_ordered_and_observation_backed(flow_context) -> None:
     } == {
         ("login", "verify_password"),
         ("login", "create_access_token"),
+        ("create_access_token", "sha256"),
     }
     steps = api_response.json()["trace"]["steps"]
     assert [step["symbol"] for step in steps] == [
         "login",
         "create_access_token",
+        "sha256",
         "verify_password",
     ]
     assert steps[0]["relationship_to_next"] == "CALLS"
-    assert steps[1]["relationship_to_next"] is None
+    assert steps[1]["relationship_to_next"] == "CALLS"
+    assert steps[2]["unresolved"] is True
+    assert steps[2]["relationship_to_next"] is None
     assert steps[-1]["relationship_to_next"] is None
-    assert all(not step["unresolved"] for step in steps)
+    assert all(not step["unresolved"] for step in (steps[0], steps[1], steps[3]))
 
     async def calls() -> list[str]:
         async with session_factory() as session:
@@ -348,6 +365,7 @@ def test_known_flow_is_ordered_and_observation_backed(flow_context) -> None:
 
     names = asyncio.run(calls())
     assert "get_related_files" in names
+    assert names.count("find_references") >= 2
     assert len(names) <= 8
     assert provider_calls["count"] == 1
 
@@ -592,6 +610,110 @@ def test_unrelated_repository_traces_branches_and_external_call(flow_context) ->
     assert "digest" in next(item["content_excerpt"] for item in api_response.json()["trace"]["evidence"] if item["file_path"] == "workers.py")
 
 
+@pytest.mark.parametrize("flow_context", [GENERAL_FIXTURE], indirect=True)
+def test_plain_register_question_marks_external_call_unresolved(flow_context) -> None:
+    client, session_factory, _, repository, provider_box, _ = flow_context
+    provider_box["provider"] = MockProvider(callback=_response_from_graph)
+
+    response = client.post(
+        f"/repositories/{repository.id}/flow-trace",
+        json={"question": "Trace register_user", "model_slot": "A"},
+    )
+
+    assert response.status_code == 200
+    steps = response.json()["trace"]["steps"]
+    digest = next(step for step in steps if step["symbol"] == "digest")
+    assert digest["unresolved"] is True
+    assert digest["relationship_to_next"] is None
+
+    async def tool_names() -> list[str]:
+        async with session_factory() as session:
+            run_id = uuid.UUID(response.json()["agent_run_id"])
+            return list(await session.scalars(
+                select(ToolCall.tool_name).where(ToolCall.agent_run_id == run_id)
+            ))
+
+    names = asyncio.run(tool_names())
+    assert len(names) <= 8
+    assert names.count("find_references") >= 2
+
+
+def test_same_named_definitions_keep_distinct_graph_nodes() -> None:
+    repository_id, index_id = uuid.uuid4(), uuid.uuid4()
+    entry_id, first_id, second_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+
+    def evidence(file: str, symbol: str, score: float) -> Evidence:
+        return Evidence(
+            evidence_id=uuid.uuid4(),
+            repository_id=repository_id,
+            repository_index_id=index_id,
+            source_type="CODE",
+            file_path=file,
+            symbol=symbol,
+            start_line=1,
+            end_line=4,
+            content_excerpt=f"def {symbol}(): pass",
+            relationship_metadata={},
+            retrieval_metadata={"score": score},
+            external_source_metadata=None,
+        )
+
+    entry = evidence("entry.py", "entry", 0.9)
+    first = evidence("first.py", "helper", 0.8)
+    second = evidence("second.py", "helper", 0.7)
+    entry.relationship_metadata["flow_edges"] = [
+        {
+            "source_symbol": "entry",
+            "source_symbol_id": str(entry_id),
+            "source_file": "entry.py",
+            "target_symbol": "helper",
+            "target_symbol_id": str(target_id),
+            "target_file": file,
+            "target_start_line": 1,
+            "target_end_line": 4,
+            "kind": "CALLS",
+            "confidence": "high",
+        }
+        for target_id, file in ((first_id, "first.py"), (second_id, "second.py"))
+    ]
+    state = FlowInvestigationState(evidence=[entry])
+
+    async def execute_tool(name, request):
+        if name == "find_symbol":
+            assert request.symbol_name == "entry"
+            return CodeSymbolList([
+                CodeSymbolResult(
+                    id=entry_id,
+                    repository_index_id=index_id,
+                    file_id=uuid.uuid4(),
+                    file_path="entry.py",
+                    name="entry",
+                    symbol_type="FUNCTION",
+                    start_line=1,
+                    end_line=4,
+                    parent_symbol=None,
+                    match_type="exact_case_sensitive",
+                    score=1.0,
+                )
+            ])
+        if name == "find_references":
+            return CodeReferenceList([])
+        assert name == "get_related_files"
+        return EvidenceList([entry, first, second])
+
+    asyncio.run(investigate_flow_trace(
+        "Trace entry", repository_id, execute_tool, state, available_tool_calls=6
+    ))
+    helpers = [node for node in state.nodes.values() if node.symbol == "helper"]
+    trace = deterministic_flow_trace(state, state.evidence)
+
+    assert {node.node_id for node in helpers} == {str(first_id), str(second_id)}
+    assert {node.file_path for node in helpers} == {"first.py", "second.py"}
+    assert {step.file for step in trace.steps if step.symbol == "helper"} == {
+        "first.py", "second.py"
+    }
+
+
 def test_flow_trace_bound_returns_valid_partial_response(flow_context) -> None:
     _, session_factory, user, repository, _, build_registry = flow_context
 
@@ -619,6 +741,86 @@ def test_flow_trace_bound_returns_valid_partial_response(flow_context) -> None:
     assert result.status is AgentRunStatus.BOUNDS_EXCEEDED
     assert isinstance(trace.steps, list)
     assert isinstance(trace.evidence, list)
+
+
+def test_bound_inside_investigation_keeps_accumulated_flow_evidence(flow_context) -> None:
+    _, session_factory, user, repository, _, build_registry = flow_context
+
+    async def run_bounded():
+        async with session_factory() as session:
+            conversation = Session(user_id=user.id, repository_id=repository.id)
+            session.add(conversation)
+            await session.flush()
+            registry = build_registry(session)
+            original = registry.get("get_related_files")
+            index = await session.scalar(
+                select(RepositoryIndex).where(RepositoryIndex.repository_id == repository.id)
+            )
+            assert index is not None
+
+            class InjectingRelatedTool:
+                name = "get_related_files"
+                description = "Test-only accumulated evidence"
+                input_schema = original.input_schema
+                output_schema = EvidenceList
+                requires_auth = True
+                injected = False
+
+                async def execute(self, input, ctx):
+                    result = await original.execute(input, ctx)
+                    if not self.injected:
+                        result.root.append(Evidence(
+                            evidence_id=uuid.uuid4(),
+                            repository_id=repository.id,
+                            repository_index_id=index.id,
+                            source_type="CODE",
+                            file_path="only_from_flow_tool.py",
+                            symbol="extra_step",
+                            start_line=1,
+                            end_line=2,
+                            content_excerpt="def extra_step(): pass",
+                            relationship_metadata={},
+                            retrieval_metadata={"score": 0.99, "signal": "structural"},
+                            external_source_metadata=None,
+                        ))
+                        self.injected = True
+                    return result
+
+            class BoundAfterRelatedController(AgentController):
+                reference_calls = 0
+
+                async def _execute_tool(self, run, counters, tool_name, input_model, ctx):
+                    if tool_name == "find_references":
+                        self.reference_calls += 1
+                        if self.reference_calls == 2:
+                            raise _BoundsExceeded("Test bound after related evidence")
+                    return await super()._execute_tool(
+                        run, counters, tool_name, input_model, ctx
+                    )
+
+            registry._tools["get_related_files"] = InjectingRelatedTool()
+            controller = BoundAfterRelatedController(
+                session,
+                {"A": MockProvider(canned_responses=[])},
+                tool_registry=registry,
+                user_id=user.id,
+            )
+            return await controller.run(
+                "Trace what happens when a user logs in.",
+                "A",
+                repository.id,
+                conversation.id,
+            )
+
+    result = asyncio.run(run_bounded())
+    trace = FlowTraceResponse.model_validate(result.result)
+    assert result.status is AgentRunStatus.BOUNDS_EXCEEDED
+    assert any(
+        item.file_path == "only_from_flow_tool.py"
+        for item in result.evidence_context.evidence
+    )
+    assert any(item.file_path == "only_from_flow_tool.py" for item in trace.evidence)
+    assert trace.steps
 
 
 def test_absent_flow_returns_422_without_model_execution(flow_context) -> None:
