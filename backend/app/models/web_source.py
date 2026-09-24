@@ -12,6 +12,7 @@ class WebSource(Base):
     __table_args__ = (
         UniqueConstraint("query_hash", "url", name="uq_web_sources_query_url"),
         Index("ix_web_sources_query_hash", "query_hash"),
+        Index("ix_web_sources_retrieved_at", "retrieved_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)

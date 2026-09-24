@@ -101,6 +101,15 @@ async def file_context():
                 size_bytes=2_000_000,
                 content=None,
             ),
+            RepositoryFile(
+                repository_index_id=index.id,
+                path="docs/guide.pdf",
+                language=None,
+                content_hash=None,
+                status=RepositoryFileStatus.BINARY,
+                size_bytes=20,
+                content=None,
+            ),
         ]
         session.add_all(files)
         await session.flush()
@@ -143,6 +152,7 @@ async def test_valid_file_and_range_reads_return_exact_content(file_context) -> 
         ("bin/tool.exe", UnsupportedFileTypeError),
         ("data/binary.txt", BinaryFileError),
         ("data/large.txt", FileTooLargeError),
+        ("docs/guide.pdf", UnsupportedFileTypeError),
     ],
 )
 async def test_invalid_file_reads_raise_specific_errors(

@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -11,7 +12,12 @@ from app.config import Settings
 from app.db.base import Base
 from app.models import WebSource
 from app.plugins.web_search.provider import SerpApiProvider, WebResult
-from app.plugins.web_search.tool import SearchWebInput, SearchWebTool
+from app.plugins.web_search.tool import (
+    SearchWebInput,
+    SearchWebTool,
+    WEB_CACHE_TTL,
+    _query_hash,
+)
 from app.tools.base import ExecutionContext
 from app.tools.registry import ToolRegistry
 
@@ -110,6 +116,88 @@ async def test_cached_query_within_ttl_skips_provider(web_session) -> None:
     assert first.cached is False
     assert second.cached is True
     assert second.results == first.results
+
+
+@pytest.mark.asyncio
+async def test_cache_reuses_full_result_set_for_different_limits(web_session) -> None:
+    class FiveResultProvider:
+        def __init__(self) -> None:
+            self.calls: list[int] = []
+
+        async def search(self, query: str, max_results: int = 5) -> list[WebResult]:
+            del query
+            self.calls.append(max_results)
+            return [
+                WebResult(
+                    title=f"Result {number}",
+                    url=f"https://docs.example.test/{number}",
+                    snippet="Documentation",
+                    source_domain="docs.example.test",
+                )
+                for number in range(5)
+            ]
+
+    provider = FiveResultProvider()
+    tool = SearchWebTool(web_session, provider)
+    first = await tool.search("Current Version FastAPI", 1)
+    second = await tool.search(" current   version fastapi ", 5)
+
+    assert len(first.results) == 1
+    assert len(second.results) == 5
+    assert second.cached is True
+    assert provider.calls == [5]
+
+
+@pytest.mark.asyncio
+async def test_expired_rows_for_other_queries_are_pruned(web_session) -> None:
+    old = WebSource(
+        query_hash="a" * 64,
+        position=0,
+        url="https://old.example.test/",
+        title="Old",
+        snippet="Expired",
+        source_domain="old.example.test",
+        retrieved_at=datetime.now(UTC) - WEB_CACHE_TTL - timedelta(minutes=1),
+    )
+    web_session.add(old)
+    await web_session.flush()
+
+    await SearchWebTool(web_session, CountingProvider()).search("official docs")
+
+    assert await web_session.get(WebSource, old.id) is None
+
+
+@pytest.mark.asyncio
+async def test_cache_upsert_handles_row_inserted_after_cache_miss(web_session) -> None:
+    result = WebResult(
+        title="Documentation",
+        url="https://docs.example.test/current",
+        snippet="Current API",
+        source_domain="docs.example.test",
+    )
+
+    class RacingProvider:
+        async def search(self, query: str, max_results: int = 5) -> list[WebResult]:
+            del max_results
+            web_session.add(
+                WebSource(
+                    query_hash=_query_hash(query),
+                    position=0,
+                    url=result.url,
+                    title=result.title,
+                    snippet=result.snippet,
+                    source_domain=result.source_domain,
+                    retrieved_at=datetime.now(UTC),
+                )
+            )
+            await web_session.flush()
+            return [result]
+
+    output = await SearchWebTool(web_session, RacingProvider()).search("official docs")
+    rows = list(await web_session.scalars(select(WebSource)))
+
+    assert output.results == [result]
+    assert len(rows) == 1
 
 
 class FailingProvider:

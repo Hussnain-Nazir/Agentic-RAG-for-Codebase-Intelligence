@@ -35,7 +35,6 @@ SUPPORTED_EXTENSIONS = {
     ".yml",
     ".toml",
     ".txt",
-    ".pdf",
 }
 MAX_READ_LINES = 4_000
 

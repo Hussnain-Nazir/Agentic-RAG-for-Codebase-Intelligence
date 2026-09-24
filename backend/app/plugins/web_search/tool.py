@@ -5,6 +5,8 @@ from datetime import UTC, datetime, timedelta
 
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.web_source import WebSource
@@ -43,9 +45,8 @@ def _normalized_query(query: str) -> str:
     return re.sub(r"\s+", " ", query.strip()).lower()
 
 
-def _query_hash(query: str, max_results: int) -> str:
-    value = f"{_normalized_query(query)}\nlimit={max_results}"
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+def _query_hash(query: str) -> str:
+    return hashlib.sha256(_normalized_query(query).encode("utf-8")).hexdigest()
 
 
 class SearchWebTool:
@@ -72,8 +73,15 @@ class SearchWebTool:
         # Phase 17 must call is_external_doc_query before invoking this tool.
         # Once explicitly invoked, this tool always executes or returns a cache hit.
         normalized = _normalized_query(query)
-        query_hash = _query_hash(normalized, max_results)
+        query_hash = _query_hash(normalized)
         cutoff = datetime.now(UTC) - WEB_CACHE_TTL
+        expired = await self._session.scalar(
+            select(WebSource.id).where(WebSource.retrieved_at < cutoff).limit(1)
+        )
+        if expired is not None:
+            await self._session.execute(
+                delete(WebSource).where(WebSource.retrieved_at < cutoff)
+            )
         cached_rows = list(
             await self._session.scalars(
                 select(WebSource)
@@ -98,30 +106,47 @@ class SearchWebTool:
                 cached=True,
             )
 
-        await self._session.execute(
-            delete(WebSource).where(WebSource.query_hash == query_hash)
-        )
         try:
             results = await asyncio.wait_for(
-                self._provider.search(normalized, max_results),
+                self._provider.search(normalized, 5),
                 timeout=WEB_SEARCH_TIMEOUT_SECONDS,
             )
         except Exception as exc:
             error = "Web search timed out" if isinstance(exc, TimeoutError) else "Web search failed"
             return SearchWebOutput(results=[], error=error)
 
+        results = results[:5]
         retrieved_at = datetime.now(UTC)
+        dialect = self._session.bind.dialect.name if self._session.bind is not None else ""
         for position, result in enumerate(results):
-            self._session.add(
-                WebSource(
-                    query_hash=query_hash,
-                    position=position,
-                    url=result.url,
-                    title=result.title,
-                    snippet=result.snippet,
-                    source_domain=result.source_domain,
-                    retrieved_at=retrieved_at,
+            values = {
+                "query_hash": query_hash,
+                "position": position,
+                "url": result.url,
+                "title": result.title,
+                "snippet": result.snippet,
+                "source_domain": result.source_domain,
+                "retrieved_at": retrieved_at,
+            }
+            if dialect in {"postgresql", "sqlite"}:
+                statement = (
+                    postgres_insert(WebSource)
+                    if dialect == "postgresql"
+                    else sqlite_insert(WebSource)
+                ).values(**values)
+                await self._session.execute(
+                    statement.on_conflict_do_update(
+                        index_elements=[WebSource.query_hash, WebSource.url],
+                        set_={
+                            "position": position,
+                            "title": result.title,
+                            "snippet": result.snippet,
+                            "source_domain": result.source_domain,
+                            "retrieved_at": retrieved_at,
+                        },
+                    )
                 )
-            )
+            else:
+                self._session.add(WebSource(**values))
         await self._session.flush()
-        return SearchWebOutput(results=results, cached=False)
+        return SearchWebOutput(results=results[:max_results], cached=False)
