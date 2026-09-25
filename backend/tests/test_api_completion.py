@@ -150,6 +150,74 @@ def test_repository_memory_and_findings_endpoints(qa_context) -> None:
     assert invalid.status_code == 422
 
 
+def test_evidence_links_resolve_only_current_repository_chunks(qa_context) -> None:
+    client, factory, repository, _, _ = qa_context
+    _, _, chunk_id = asyncio.run(_chunk_and_index(factory, repository.id))
+    missing_id = uuid.uuid4()
+    path = f"/repositories/{repository.id}/evidence"
+
+    response = client.get(path, params=[("ids", str(chunk_id)), ("ids", str(missing_id))])
+    assert response.status_code == 200
+    resolved, missing = response.json()
+    assert resolved["evidence_id"] == str(chunk_id)
+    assert resolved["file_path"]
+    assert resolved["start_line"] >= 1
+    assert resolved["end_line"] >= resolved["start_line"]
+    assert resolved["content_excerpt"]
+    assert missing == {
+        "evidence_id": str(missing_id), "file_path": None,
+        "start_line": None, "end_line": None, "content_excerpt": None,
+    }
+
+    async def create_other_repository_chunk() -> uuid.UUID:
+        async with factory() as session:
+            other = Repository(
+                owner_id=repository.owner_id, source_type="upload", name="other",
+                default_branch="upload", selected_branch="upload",
+            )
+            session.add(other)
+            await session.flush()
+            index = RepositoryIndex(
+                repository_id=other.id, version=1, revision="other-revision",
+                state=RepositoryIndexState.READY,
+            )
+            session.add(index)
+            await session.flush()
+            file = RepositoryFile(
+                repository_index_id=index.id, path="other.py", size_bytes=4,
+                status="OK", content="pass",
+            )
+            session.add(file)
+            await session.flush()
+            chunk = CodeChunk(
+                repository_id=other.id, repository_index_id=index.id,
+                file_id=file.id, file_path="other.py", language="python",
+                chunk_type="MODULE", start_line=1, end_line=1,
+                content="pass", content_hash="other-hash",
+            )
+            session.add(chunk)
+            await session.commit()
+            return chunk.id
+
+    other_chunk_id = asyncio.run(create_other_repository_chunk())
+    cross_repository = client.get(path, params={"ids": str(other_chunk_id)})
+    assert cross_repository.status_code == 200
+    assert cross_repository.json()[0]["file_path"] is None
+
+    async def supersede_index() -> None:
+        async with factory() as session:
+            session.add(RepositoryIndex(
+                repository_id=repository.id, version=2, revision="new-revision",
+                state=RepositoryIndexState.READY,
+            ))
+            await session.commit()
+
+    asyncio.run(supersede_index())
+    stale = client.get(path, params={"ids": str(chunk_id)})
+    assert stale.status_code == 200
+    assert stale.json()[0]["file_path"] is None
+
+
 def test_agent_run_detail_and_ordered_trace(qa_context) -> None:
     client, factory, repository, _, _ = qa_context
 
@@ -222,6 +290,7 @@ def test_new_repository_endpoints_enforce_404_and_403(qa_context) -> None:
         ("get", "/files/content?path=config.py"),
         ("get", "/symbols?q=login"),
         ("get", "/memory"),
+        ("get", f"/evidence?ids={chunk_id}"),
         ("get", "/findings"),
         ("post", "/findings"),
         ("delete", ""),

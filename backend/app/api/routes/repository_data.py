@@ -11,6 +11,7 @@ from app.api.deps import get_repository_or_404
 from app.auth.dependencies import get_current_user
 from app.db.session import get_db
 from app.memory.service import MemoryService
+from app.models.code_chunk import CodeChunk
 from app.models.finding import Finding, FindingType
 from app.models.repository import Repository, RepositoryAccessStatus, RepositorySourceType
 from app.models.repository_file import RepositoryFile, RepositoryFileStatus
@@ -127,6 +128,14 @@ class FindingResponse(BaseModel):
     content: dict[str, Any]
     evidence_ids: list[uuid.UUID]
     created_at: datetime
+
+
+class ResolvedEvidenceLink(BaseModel):
+    evidence_id: uuid.UUID
+    file_path: str | None
+    start_line: int | None
+    end_line: int | None
+    content_excerpt: str | None
 
 
 def _index_summary(index: RepositoryIndex | None) -> IndexSummary | None:
@@ -343,6 +352,36 @@ async def list_repository_memory(
         repository_id, "", include_stale=include_stale
     )
     return [RepositoryMemoryResponse.model_validate(item, from_attributes=True) for item in memories]
+
+
+@router.get("/{repository_id}/evidence", response_model=list[ResolvedEvidenceLink])
+async def resolve_evidence_links(
+    repository_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    repository: Annotated[Repository, Depends(get_repository_or_404)],
+    ids: Annotated[list[uuid.UUID], Query(min_length=1, max_length=100)],
+) -> list[ResolvedEvidenceLink]:
+    del repository
+    try:
+        index = await current_repository_index(db, repository_id)
+    except ToolIndexNotReadyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    chunks = list(await db.scalars(select(CodeChunk).where(
+        CodeChunk.repository_id == repository_id,
+        CodeChunk.repository_index_id == index.id,
+        CodeChunk.id.in_(ids),
+    )))
+    by_id = {chunk.id: chunk for chunk in chunks}
+    return [
+        ResolvedEvidenceLink(
+            evidence_id=evidence_id,
+            file_path=by_id[evidence_id].file_path if evidence_id in by_id else None,
+            start_line=by_id[evidence_id].start_line if evidence_id in by_id else None,
+            end_line=by_id[evidence_id].end_line if evidence_id in by_id else None,
+            content_excerpt=by_id[evidence_id].content[:500] if evidence_id in by_id else None,
+        )
+        for evidence_id in ids
+    ]
 
 
 @router.post(
