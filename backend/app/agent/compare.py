@@ -230,7 +230,8 @@ async def compare_models(
             for slot in ("A", "B")
         ]
         comparison = ModelComparisonResponse(
-            question=question, evidence_context_id=context.context_id, results=results
+            agent_run_id=run.id, question=question,
+            evidence_context_id=context.context_id, results=results
         )
         run.status = (
             AgentRunStatus.OK if any(item.error is None for item in results)

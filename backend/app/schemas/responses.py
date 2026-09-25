@@ -78,6 +78,7 @@ class ModelResult(BaseModel):
 
 
 class ModelComparisonResponse(BaseModel):
+    agent_run_id: uuid.UUID
     question: str
     evidence_context_id: uuid.UUID
     results: list[ModelResult]

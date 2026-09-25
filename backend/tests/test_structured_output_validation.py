@@ -132,6 +132,7 @@ def response_fixtures(evidence: Evidence):
         evidence=[evidence],
     )
     comparison = ModelComparisonResponse(
+        agent_run_id=uuid.uuid4(),
         question="How does login work?",
         evidence_context_id=uuid.uuid4(),
         results=[

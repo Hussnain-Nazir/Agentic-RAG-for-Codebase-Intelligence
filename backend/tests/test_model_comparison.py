@@ -75,11 +75,12 @@ def test_compare_models_shares_exact_prompt_and_persists_peer_results(qa_context
             models = list(await session.scalars(select(ModelExecution).where(
                 ModelExecution.agent_run_id == run.id
             )))
-            return run.status.value, [item.tool_name for item in tools], {
+            return run.id, run.status.value, [item.tool_name for item in tools], {
                 item.slot.value for item in models
             }
 
-    status, tools, slots = asyncio.run(trace())
+    run_id, status, tools, slots = asyncio.run(trace())
+    assert comparison.agent_run_id == run_id
     assert status == "OK"
     assert tools == ["retrieve_memory", "search_codebase"]
     assert slots == {"A", "B"}
