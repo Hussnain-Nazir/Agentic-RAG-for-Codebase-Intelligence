@@ -429,6 +429,10 @@ class FakeGitHubClient:
             }
         ]
 
+    async def list_branches(self, installation_id: int, repository_id: int) -> list[dict[str, Any]]:
+        assert (installation_id, repository_id) == (77, 1001)
+        return [{"name": "main"}, {"name": "develop"}]
+
     async def get_branch_revision(
         self,
         installation_id: int,
@@ -565,6 +569,38 @@ def github_import_context() -> Iterator[
     with TestClient(app) as client:
         yield client, session_factory, user_id
     asyncio.run(engine.dispose())
+
+
+def test_branch_picker_route_checks_installation_and_repository_access(
+    github_import_context: tuple[TestClient, async_sessionmaker[AsyncSession], uuid.UUID],
+) -> None:
+    client, session_factory, user_id = github_import_context
+    async def installation_id() -> uuid.UUID:
+        async with session_factory() as session:
+            installation = await session.scalar(select(GitHubInstallation))
+            assert installation is not None
+            return installation.id
+
+    owned_installation = asyncio.run(installation_id())
+    path = f"/github/installations/{owned_installation}/repositories/1001/branches"
+    assert client.get(path).status_code == 401
+    headers = {"Authorization": f"Bearer {create_access_token(user_id, TEST_SECRET)}"}
+    result = client.get(path, headers=headers)
+    assert result.status_code == 200
+    assert result.json() == [{"name": "main"}, {"name": "develop"}]
+    assert client.get(path.replace("/1001/", "/9999/"), headers=headers).status_code == 404
+
+    async def other_user_id() -> uuid.UUID:
+        async with session_factory() as session:
+            other = User(email="other-branch-user@example.com", hashed_password="unused")
+            session.add(other)
+            await session.commit()
+            return other.id
+
+    other_headers = {
+        "Authorization": f"Bearer {create_access_token(asyncio.run(other_user_id()), TEST_SECRET)}"
+    }
+    assert client.get(path, headers=other_headers).status_code == 403
 
 
 def test_github_import_uses_shared_normalization_and_persists_blob_shas(

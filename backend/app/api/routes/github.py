@@ -15,7 +15,7 @@ from app.auth.dependencies import get_current_user
 from app.config import Settings, get_settings
 from app.db.session import get_db
 from app.github.client import GitHubClient
-from app.github.errors import GitHubApiError, GitHubInstallationRevoked
+from app.github.errors import GitHubAccessLost, GitHubApiError, GitHubInstallationRevoked, GitHubRateLimited
 from app.models.github_installation import (
     GitHubInstallation,
     GitHubInstallationStatus,
@@ -57,6 +57,10 @@ class InstallationResponse(BaseModel):
     installation_id: int
     account_login: str
     status: GitHubInstallationStatus
+
+
+class BranchResponse(BaseModel):
+    name: str
 
 
 @router.get("/install-url", response_model=InstallUrlResponse)
@@ -217,3 +221,51 @@ async def list_installation_repositories(
 
     fields = ("id", "name", "full_name", "default_branch", "private")
     return [{field: repository.get(field) for field in fields} for repository in repositories]
+
+
+@router.get(
+    "/installations/{installation_id}/repositories/{repository_id}/branches",
+    response_model=list[BranchResponse],
+)
+async def list_installation_repository_branches(
+    installation_id: uuid.UUID,
+    repository_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    client: Annotated[GitHubClient, Depends(get_github_client)],
+) -> list[BranchResponse]:
+    installation = await db.get(GitHubInstallation, installation_id)
+    if installation is None:
+        raise HTTPException(status_code=404, detail="GitHub installation not found")
+    if installation.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="GitHub installation access denied")
+    try:
+        repositories = await client.list_repositories(installation.installation_id)
+        if not any(item.get("id") == repository_id for item in repositories):
+            raise HTTPException(status_code=404, detail="GitHub repository not found")
+        branches = await client.list_branches(installation.installation_id, repository_id)
+    except GitHubInstallationRevoked as exc:
+        installation.status = GitHubInstallationStatus.REVOKED
+        await db.execute(
+            update(Repository)
+            .where(Repository.github_installation_id == installation.id)
+            .values(access_status=RepositoryAccessStatus.ACCESS_LOST)
+        )
+        await db.commit()
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except GitHubAccessLost as exc:
+        await db.execute(
+            update(Repository)
+            .where(
+                Repository.github_installation_id == installation.id,
+                Repository.github_repo_id == repository_id,
+            )
+            .values(access_status=RepositoryAccessStatus.ACCESS_LOST)
+        )
+        await db.commit()
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except GitHubRateLimited as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except GitHubApiError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return [BranchResponse(name=item["name"]) for item in branches if isinstance(item.get("name"), str)]

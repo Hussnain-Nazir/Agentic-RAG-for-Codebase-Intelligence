@@ -1,26 +1,15 @@
-:root {
-  color: #172033;
-  background: #f6f7fb;
-  font-family: Inter, system-ui, sans-serif;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body { @apply m-0 bg-slate-950 font-sans; }
+  button, input, select { font: inherit; }
 }
 
-body {
-  margin: 0;
-}
-
-main {
-  max-width: 48rem;
-  margin: 0 auto;
-  padding: 8rem 2rem;
-}
-
-h1 {
-  margin-bottom: 0.5rem;
-  font-size: 3rem;
-}
-
-p {
-  margin: 0;
-  color: #4a5568;
-  font-size: 1.125rem;
+@layer components {
+  .input { @apply block w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-slate-100 outline-none focus:border-cyan-400; }
+  .label { @apply mb-2 block text-sm font-medium text-slate-200; }
+  .button-primary { @apply rounded-lg bg-cyan-400 px-5 py-2.5 font-semibold text-slate-950 hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50; }
+  .badge { @apply inline-block rounded-full border border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-300; }
 }

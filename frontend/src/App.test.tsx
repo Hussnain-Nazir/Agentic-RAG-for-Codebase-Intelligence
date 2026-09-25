@@ -5,9 +5,9 @@ import { describe, expect, it } from "vitest";
 import { App } from "./App";
 
 describe("App", () => {
-  it("renders the Prism placeholder", () => {
+  it("shows sign in when no session exists", () => {
+    sessionStorage.clear();
     render(<App />);
-
-    expect(screen.getByRole("heading", { name: "Prism" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Sign in" })).toBeInTheDocument();
   });
 });

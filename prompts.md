@@ -1109,3 +1109,17 @@
 **Resulting module/commit:** `backend/app/api/routes/repository_data.py`, `backend/app/api/routes/agent_runs.py`, `backend/app/main.py`, `backend/tests/test_api_completion.py`, `README.md`, and `prompts.md`. Changes were left uncommitted.
 
 **Test result:** The full backend suite passed with 276 passed and 2 skipped. The skipped tests are opt-in PostgreSQL/pgvector integration tests requiring `PRISM_TEST_POSTGRES_URL`. The existing frontend Vitest test passed. `docker compose up -d --build backend` rebuilt and started the backend with PostgreSQL healthy.
+
+### 2026-09-25 - Phase 24 frontend screens A through E
+
+**Prompt:** Implement typed frontend API hooks, protected routes, authentication, dashboard, GitHub and ZIP repository import, GitHub repository and branch selection, and indexing status from PRISM_SPEC.md section 27. Test authentication forms, dashboard states, and ZIP size rejection. Keep later workspace screens out of scope.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added a typed fetch client, TanStack Query hooks, React Router protected routes, React Hook Form and Zod authentication forms, a repository dashboard, ZIP upload with progress and client-side size validation, an authorized GitHub repository picker with branch selection, and a polling indexing status screen. Added the narrow GitHub branch-list route needed by the picker and configured the Vite development proxy for the real backend.
+
+**Modified/rejected:** The backend does not yet expose an import retry endpoint, so the FAILED screen states that retry is unavailable. The workspace and other later frontend screens were not added. The two PostgreSQL/pgvector tests remain opt-in and skipped without PRISM_TEST_POSTGRES_URL.
+
+**Resulting module/commit:** `frontend/src/api/`, `frontend/src/app/`, `frontend/src/pages/`, `frontend/src/components/common/`, frontend build configuration and dependencies, `backend/app/api/routes/github.py`, `backend/tests/test_github_integration.py`, `docker-compose.yml`, `README.md`, and `prompts.md`. Changes are uncommitted.
+
+**Test result:** Frontend Vitest passed 5 tests and `npm run build` completed without type errors. The full backend suite passed with 277 passed and 2 skipped. The Phase 24 GitHub/API subset passed 39 tests, including branch-route authorization. `docker compose up -d --build backend` rebuilt and started the backend, and `/health` returned `{"status":"ok"}`. A local Vite dev server proxied `/api/health` to the backend and returned the same result.
