@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, select, text
 
@@ -154,6 +155,7 @@ def test_agent_run_detail_and_ordered_trace(qa_context) -> None:
 
     async def seed_run():
         async with factory() as session:
+            started = datetime(2026, 9, 25, 10, 0)
             conversation = Session(user_id=repository.owner_id, repository_id=repository.id)
             session.add(conversation)
             await session.flush()
@@ -161,15 +163,15 @@ def test_agent_run_detail_and_ordered_trace(qa_context) -> None:
             session.add(run)
             await session.flush()
             session.add_all([
-                ToolCall(agent_run_id=run.id, sequence=2, tool_name="find_symbol", args_sanitized={}, status="OK"),
-                ToolCall(agent_run_id=run.id, sequence=1, tool_name="search_codebase", args_sanitized={}, status="OK"),
+                ToolCall(agent_run_id=run.id, sequence=2, tool_name="find_symbol", args_sanitized={}, status="OK", started_at=started + timedelta(seconds=2), completed_at=started + timedelta(seconds=3)),
+                ToolCall(agent_run_id=run.id, sequence=1, tool_name="search_codebase", args_sanitized={}, status="OK", started_at=started, completed_at=started + timedelta(seconds=1)),
                 ModelExecution(agent_run_id=run.id, slot=ModelSlot.B, model_name="mock-b", latency_ms=3, validation_status="VALID"),
                 ModelExecution(agent_run_id=run.id, slot=ModelSlot.A, model_name="mock-a", latency_ms=2, validation_status="VALID"),
             ])
             await session.commit()
-            return run.id
+            return run.id, started
 
-    run_id = asyncio.run(seed_run())
+    run_id, started = asyncio.run(seed_run())
     detail = client.get(f"/agent-runs/{run_id}")
     assert detail.status_code == 200
     assert detail.json()["repository_id"] == str(repository.id)
@@ -179,6 +181,10 @@ def test_agent_run_detail_and_ordered_trace(qa_context) -> None:
     assert [item["tool_name"] for item in trace.json()["tool_calls"]] == [
         "search_codebase", "find_symbol"
     ]
+    assert [datetime.fromisoformat(item["started_at"]) for item in trace.json()["tool_calls"]] == [
+        started, started + timedelta(seconds=2)
+    ]
+    assert all(item["completed_at"] for item in trace.json()["tool_calls"])
     assert [item["slot"] for item in trace.json()["model_executions"]] == ["A", "B"]
     missing = uuid.uuid4()
     assert client.get(f"/agent-runs/{missing}").status_code == 404

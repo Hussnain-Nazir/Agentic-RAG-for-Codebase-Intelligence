@@ -1,5 +1,6 @@
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from sqlalchemy import select
@@ -87,6 +88,7 @@ class HookManager:
         tool_call.duration_ms = duration_ms
         tool_call.result_summary = result_summary
         tool_call.error = error
+        tool_call.completed_at = datetime.now(UTC)
         await self._session.flush()
 
     async def model_execution(

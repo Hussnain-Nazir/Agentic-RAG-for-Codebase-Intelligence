@@ -113,6 +113,8 @@ def test_hook_manager_sanitizes_credentials() -> None:
                 },
             }
             assert call.status == "OK"
+            assert call.started_at is not None
+            assert call.completed_at is not None
 
     asyncio.run(exercise())
 

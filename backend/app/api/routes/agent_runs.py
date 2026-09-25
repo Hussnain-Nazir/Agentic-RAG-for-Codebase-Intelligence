@@ -39,6 +39,8 @@ class ToolCallDetail(BaseModel):
     duration_ms: int | None
     result_summary: str | None
     error: str | None
+    started_at: datetime
+    completed_at: datetime | None
 
 
 class ModelExecutionDetail(BaseModel):
