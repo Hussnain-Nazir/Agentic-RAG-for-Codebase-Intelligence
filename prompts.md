@@ -1095,3 +1095,17 @@
 **Resulting module/commit:** `backend/app/agent/compare.py`, `backend/app/api/routes/analysis.py`, and `backend/tests/test_model_comparison.py`. Changes were left uncommitted.
 
 **Test result:** The full backend suite passed with 270 passed and 2 skipped. The skipped tests are opt-in PostgreSQL/pgvector integration tests requiring `PRISM_TEST_POSTGRES_URL`. The existing frontend Vitest test passed. `docker compose up -d --build backend` rebuilt and started the backend with PostgreSQL healthy.
+
+### 2026-09-25 - Phase 23 REST API completion
+
+**Prompt:** Complete the missing repository list, detail, index status, file tree/content, symbol, memory, finding, and agent-run/trace endpoints from PRISM_SPEC.md section 26. Add repository deletion that cascades through all existing dependent tables, and test happy paths, ownership boundaries, documented errors, and direct post-delete database counts. Keep optional code review and frontend work out of scope.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added authenticated repository data routes, the agent-run detail and trace routes, and a repository DELETE route using database cascades. Added response schemas for repository/index/file/memory/finding/trace data and tests for current index progress, browsing, file-reading errors, finding validation, agent trace ordering, ownership, and deletion counts.
+
+**Modified/rejected:** The optional code-review endpoint remains for later by user direction. Supplementary-document tables are not yet present in the database schema, so the deletion test verifies their absence and directly verifies zero remaining rows in every existing dependent table from section 28.3. No supplementary-document ingestion or schema was added.
+
+**Resulting module/commit:** `backend/app/api/routes/repository_data.py`, `backend/app/api/routes/agent_runs.py`, `backend/app/main.py`, `backend/tests/test_api_completion.py`, `README.md`, and `prompts.md`. Changes were left uncommitted.
+
+**Test result:** The full backend suite passed with 276 passed and 2 skipped. The skipped tests are opt-in PostgreSQL/pgvector integration tests requiring `PRISM_TEST_POSTGRES_URL`. The existing frontend Vitest test passed. `docker compose up -d --build backend` rebuilt and started the backend with PostgreSQL healthy.

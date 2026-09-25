@@ -23,6 +23,10 @@ For web-search development, set `SERPAPI_API_KEY` in `.env`. The key is server-s
 
 For direct development, install `backend/requirements.txt` and run `uvicorn app.main:app --reload` from `backend/`. Run `npm install` followed by `npm run dev` from `frontend/`.
 
+## API overview
+
+The authenticated API covers repository import, browsing, index status, code analysis, memory, findings, agent traces, and repository deletion. See [PRISM_SPEC.md section 26](PRISM_SPEC.md#26-rest-api-specification) for the endpoint contracts and error cases. Evidence-backed code review remains optional and is not exposed yet.
+
 ## [MANUAL] GitHub App setup
 
 1. Create a GitHub App with read-only Contents and Metadata permissions. Disable webhooks unless a later phase explicitly adds them.
@@ -34,4 +38,4 @@ For direct development, install `backend/requirements.txt` and run `uvicorn app.
 
 Installation state is short-lived, single-use, and bound to the authenticated Prism user who requested the install URL. The callback verifies through a GitHub user access token that the installation is accessible to the GitHub user before persisting it. User and installation tokens are not stored. Do not place the private key, client secret, installation tokens, or user tokens in the frontend, repository, logs, or model context.
 
-Status: Phase 22 complete
+Status: Phase 23 complete
