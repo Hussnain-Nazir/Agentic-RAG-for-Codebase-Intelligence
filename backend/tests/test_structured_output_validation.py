@@ -117,6 +117,7 @@ def response_fixtures(evidence: Evidence):
         evidence=[evidence],
     )
     architecture = ArchitectureResponse(
+        agent_run_id=uuid.uuid4(),
         summary="The repository contains 1 Python file under backend and uses FastAPI.",
         languages={"python": 1},
         main_folders=["backend"],

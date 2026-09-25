@@ -51,6 +51,7 @@ class ChangeImpactResponse(BaseModel):
 
 
 class ArchitectureResponse(BaseModel):
+    agent_run_id: uuid.UUID
     summary: str
     languages: dict[str, int]
     main_folders: list[str]

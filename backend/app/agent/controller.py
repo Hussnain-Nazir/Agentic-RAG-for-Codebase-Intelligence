@@ -130,10 +130,11 @@ def _architecture_template() -> str:
 
 
 def _architecture_from_summary(
-    summary: ArchitectureSummary, narrated: ArchitectureNarration
+    summary: ArchitectureSummary, narrated: ArchitectureNarration, run_id: uuid.UUID
 ) -> ArchitectureResponse:
     folders = summary.top_level_folders
     return ArchitectureResponse(
+        agent_run_id=run_id,
         summary=narrated.summary.strip(),
         languages=summary.languages,
         main_folders=folders,
@@ -480,7 +481,7 @@ class AgentController:
                     AgentRunStatus.OK,
                     task_type,
                     _architecture_from_summary(
-                        architecture, ArchitectureNarration.model_validate(structured)
+                        architecture, ArchitectureNarration.model_validate(structured), run.id
                     ),
                     context,
                 )

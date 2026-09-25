@@ -71,9 +71,10 @@ def test_architecture_uses_inspection_and_one_model_call(qa_context) -> None:
             models = list(await session.scalars(
                 select(ModelExecution).where(ModelExecution.agent_run_id == run.id)
             ))
-            return summary, tools, models
+            return summary, run.id, tools, models
 
-    summary, tools, models = asyncio.run(inspect_and_trace())
+    summary, run_id, tools, models = asyncio.run(inspect_and_trace())
+    assert architecture.agent_run_id == run_id
     assert observed_summary == summary.model_dump(mode="json")
     assert architecture.languages == summary.languages
     assert "6 Python files" in architecture.summary
