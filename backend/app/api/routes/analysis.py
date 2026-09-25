@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.classification import TaskType
+from app.agent.compare import InsufficientComparisonEvidence, compare_models
 from app.agent.controller import AgentController, AgentProviderError
 from app.api.deps import get_repository_or_404
 from app.api.routes.repositories import get_embedding_provider
@@ -20,7 +21,7 @@ from app.models.agent_run import AgentRunStatus
 from app.models.repository import Repository
 from app.models.session import Session
 from app.models.user import User
-from app.schemas.responses import ArchitectureResponse, ChangeImpactResponse, FlowTraceResponse, RepositoryAnswer
+from app.schemas.responses import ArchitectureResponse, ChangeImpactResponse, FlowTraceResponse, ModelComparisonResponse, RepositoryAnswer
 from app.tools.registry import ToolRegistry
 
 router = APIRouter(prefix="/repositories", tags=["analysis"])
@@ -56,6 +57,10 @@ class ChangeImpactApiResponse(BaseModel):
     impact: ChangeImpactResponse
 
 
+class CompareModelsRequest(BaseModel):
+    question: str = Field(min_length=1)
+
+
 def get_analysis_providers(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict[Literal["A", "B"], LLMProvider]:
@@ -82,6 +87,51 @@ def get_analysis_tool_registry(
         settings=settings,
     )
     return registry
+
+
+@router.post(
+    "/{repository_id}/compare-models",
+    response_model=ModelComparisonResponse,
+)
+async def compare_repository_models(
+    repository_id: uuid.UUID,
+    request: CompareModelsRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    repository: Annotated[Repository, Depends(get_repository_or_404)],
+    providers: Annotated[
+        dict[Literal["A", "B"], LLMProvider], Depends(get_analysis_providers)
+    ],
+    tool_registry: Annotated[ToolRegistry, Depends(get_analysis_tool_registry)],
+) -> ModelComparisonResponse:
+    del repository
+    conversation = Session(user_id=current_user.id, repository_id=repository_id)
+    db.add(conversation)
+    await db.flush()
+    try:
+        comparison = await compare_models(
+            repository_id,
+            request.question,
+            conversation.id,
+            session=db,
+            user_id=current_user.id,
+            providers=providers,
+            tool_registry=tool_registry,
+        )
+    except InsufficientComparisonEvidence as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    if all(result.error is not None for result in comparison.results):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "message": "Both model comparisons failed",
+                "results": [result.model_dump(mode="json") for result in comparison.results],
+            },
+        )
+    return comparison
 
 
 @router.get("/{repository_id}/architecture", response_model=ArchitectureResponse)

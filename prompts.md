@@ -1081,3 +1081,17 @@
 **Resulting module/commit:** `backend/app/agent/prompts/v1/architecture.md`, `backend/app/agent/controller.py`, `backend/app/api/routes/analysis.py`, `backend/app/tools/repository_tools.py`, and `backend/tests/test_architecture.py`. Changes were left uncommitted.
 
 **Test result:** The full backend suite passed with 260 passed and 2 skipped. The skipped tests are opt-in PostgreSQL/pgvector integration tests requiring `PRISM_TEST_POSTGRES_URL`. The existing frontend Vitest test passed after `npm ci --offline` restored local dependencies. No tracked frontend files changed. `docker compose up -d --build backend` rebuilt the image and started the backend container with PostgreSQL healthy.
+
+### 2026-09-25 - Phase 22 model comparison
+
+**Prompt:** Implement explicit Compare Models using one repository Q&A EvidenceContext and identical prompts for Model A and Model B, validate each response independently, persist both executions under one AgentRun, and expose authenticated `POST /repositories/{id}/compare-models`. Return both errors on total failure and preserve a successful peer when the other fails. Add MockProvider tests; keep the frontend and normal single-model paths unchanged.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added comparison orchestration through the existing memory, hybrid search, optional symbol expansion, ContextBuilder, Q&A prompt, response validation, citation validation, and trace hooks. The API returns peer results in slot order without ranking or a winner. A failed slot reports a sanitized error while the other slot continues.
+
+**Modified/rejected:** Kept the normal single-model controller paths unchanged. The comparison path builds one context and one prompt, then invokes each configured slot in sequence so both receive identical inputs and database trace writes remain ordered.
+
+**Resulting module/commit:** `backend/app/agent/compare.py`, `backend/app/api/routes/analysis.py`, and `backend/tests/test_model_comparison.py`. Changes were left uncommitted.
+
+**Test result:** The full backend suite passed with 270 passed and 2 skipped. The skipped tests are opt-in PostgreSQL/pgvector integration tests requiring `PRISM_TEST_POSTGRES_URL`. The existing frontend Vitest test passed. `docker compose up -d --build backend` rebuilt and started the backend with PostgreSQL healthy.
