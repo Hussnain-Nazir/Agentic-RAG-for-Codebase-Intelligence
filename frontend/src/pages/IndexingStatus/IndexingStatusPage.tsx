@@ -26,6 +26,7 @@ export function IndexingStatusPage() {
       {index.size_warning && <p className="mt-4 text-amber-300">This repository exceeds the tested 2,000-file scale. Retrieval quality and latency are untested at this size.</p>}
       {index.failure_reason && <div className="mt-4"><ErrorNotice message={index.failure_reason} /></div>}
       {index.state === "FAILED" && <p className="mt-5 text-sm text-slate-400">Retry is not available for this import yet.</p>}
+      {(index.state === "READY" || index.state === "PARTIAL") && <Link to={`/repositories/${id}`} className="button-primary mt-6 inline-block">Open workspace</Link>}
       <Link to="/dashboard" className="mt-6 inline-block text-cyan-300 underline">Back to repositories</Link>
     </section>}
   </Shell>;

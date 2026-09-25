@@ -25,8 +25,9 @@ export function DashboardPage() {
           <span>{repository.selected_branch}</span>
         </div>
         <div className="mt-5 flex items-center gap-4 text-sm">
-          <Link className="text-cyan-300 underline" to={`/repositories/${repository.id}/indexing`}>Open</Link>
-          <button type="button" disabled title="Available in the workspace phase" className="cursor-not-allowed text-slate-500">Ask</button>
+          <Link className="text-cyan-300 underline" to={`/repositories/${repository.id}`}>Open</Link>
+          <Link className="text-cyan-300 underline" to={`/repositories/${repository.id}`}>Ask</Link>
+          <Link className="text-slate-300 underline" to={`/repositories/${repository.id}/indexing`}>Index status</Link>
         </div>
       </article>)}
     </div>}

@@ -6,6 +6,10 @@ import { DashboardPage } from "../pages/Dashboard/DashboardPage";
 import { GitHubPickerPage } from "../pages/GitHubPicker/GitHubPickerPage";
 import { IndexingStatusPage } from "../pages/IndexingStatus/IndexingStatusPage";
 import { LoginPage, RegisterPage } from "../pages/Authentication/AuthPages";
+import { WorkspacePage } from "../pages/Workspace/WorkspacePage";
+import { RepositoryMemoryPage } from "../pages/RepositoryMemory/RepositoryMemoryPage";
+import { FindingsPage } from "../pages/Findings/FindingsPage";
+import { SettingsPage } from "../pages/Settings/SettingsPage";
 
 function ProtectedRoute() {
   const location = useLocation();
@@ -29,6 +33,10 @@ export function AppRoutes() {
         <Route path="/repositories/new" element={<AddRepositoryPage />} />
         <Route path="/repositories/new/github" element={<GitHubPickerPage />} />
         <Route path="/repositories/:id/indexing" element={<IndexingStatusPage />} />
+        <Route path="/repositories/:id" element={<WorkspacePage />} />
+        <Route path="/repositories/:id/memory" element={<RepositoryMemoryPage />} />
+        <Route path="/repositories/:id/findings" element={<FindingsPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

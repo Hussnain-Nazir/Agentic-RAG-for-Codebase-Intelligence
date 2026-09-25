@@ -1,4 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { Link, useNavigate } from "react-router-dom";
 import { z } from "zod";
@@ -18,6 +19,7 @@ type Credentials = z.infer<typeof loginSchema>;
 function AuthForm({ mode }: { mode: "login" | "register" }) {
   const [passwordVisible, setPasswordVisible] = useState(false);
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const login = useLogin();
   const register = useRegister();
   const schema = mode === "login" ? loginSchema : registerSchema;
@@ -29,6 +31,7 @@ function AuthForm({ mode }: { mode: "login" | "register" }) {
     try {
       if (mode === "register") await register.mutateAsync({ email, password });
       const result = await login.mutateAsync({ email, password });
+      queryClient.clear();
       authToken.set(result.access_token);
       navigate("/dashboard", { replace: true });
     } catch { /* Mutation state displays the server error. */ }

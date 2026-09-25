@@ -1123,3 +1123,17 @@
 **Resulting module/commit:** `frontend/src/api/`, `frontend/src/app/`, `frontend/src/pages/`, `frontend/src/components/common/`, frontend build configuration and dependencies, `backend/app/api/routes/github.py`, `backend/tests/test_github_integration.py`, `docker-compose.yml`, `README.md`, and `prompts.md`. Changes are uncommitted.
 
 **Test result:** Frontend Vitest passed 5 tests and `npm run build` completed without type errors. The full backend suite passed with 277 passed and 2 skipped. The Phase 24 GitHub/API subset passed 39 tests, including branch-route authorization. `docker compose up -d --build backend` rebuilt and started the backend, and `/health` returned `{"status":"ok"}`. A local Vite dev server proxied `/api/health` to the backend and returned the same result.
+
+### 2026-09-25 - Phase 25 repository workspace and connected screens
+
+**Prompt:** Build PRISM_SPEC.md section 27 Screens F, G, H, and K using the existing backend API: a three-pane repository workspace with file and symbol browsing, four analysis tabs, evidence file viewing, Model A/B selection, explicit Compare Models, Agent Trace details, Repository Memory, saved Findings, and GitHub connection settings. Give each workspace panel its own loading, empty, and error behavior. Add frontend tests for each analysis result, evidence navigation, comparison, and trace ordering; keep backend changes out of scope.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Extended the typed API client and TanStack Query hooks; added protected workspace, memory, findings, and settings routes; built repository tree, analysis, evidence, and trace panels; rendered the four structured analysis responses and side-by-side peer comparison; added Save Finding for flow and impact results; resolved current-index evidence links for memory and findings while marking stale IDs without current details. Cleared cached repository data on login and sign-out so it cannot carry across accounts.
+
+**Modified/rejected:** No backend endpoint or schema was changed. The workspace uses the agent-run IDs, tool timestamps, and evidence resolver supplied by the preceding branch patches. The optional code-review UI and later evaluation work remain out of scope. A live authenticated browser walkthrough was not performed in this phase.
+
+**Resulting module/commit:** `frontend/src/api/`, `frontend/src/app/routes.tsx`, `frontend/src/components/`, `frontend/src/pages/`, `frontend/src/styles.css`, `README.md`, and `prompts.md`. Changes are uncommitted.
+
+**Test result:** Frontend Vitest passed 20 tests, including all previous tests and Phase 25 analysis, evidence, trace, memory, findings, and cache-isolation cases. `npm run build` passed without type errors. The unchanged full backend suite passed with 278 passed and 2 skipped; the skipped tests require `PRISM_TEST_POSTGRES_URL`. `docker compose up -d --build backend` applied the preceding backend patches to the local service, and `/health` returned `{"status":"ok"}` after startup.

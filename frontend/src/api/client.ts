@@ -1,6 +1,9 @@
 import type {
-  GitHubBranch, GitHubInstallation, GitHubRepository, IndexStatus,
-  RepositoryDetail, RepositoryImport, RepositorySummary,
+  AgentTrace, ArchitectureResponse, ChangeImpactResponse, CodeSymbol, FileContent,
+  FileTreeEntry, Finding, FlowTraceResponse, GitHubBranch, GitHubInstallation,
+  GitHubRepository, IndexStatus, ModelComparisonResponse, ModelSlot, ModelsConfig,
+  RepositoryAnswer, RepositoryDetail, RepositoryImport, RepositoryMemory,
+  RepositorySummary, ResolvedEvidenceLink,
 } from "./types";
 
 const TOKEN_KEY = "prism_access_token";
@@ -22,7 +25,10 @@ export const authToken = {
 async function parseError(response: Response): Promise<ApiError> {
   const body = await response.json().catch(() => null) as { detail?: unknown } | null;
   const detail = body?.detail;
-  return new ApiError(response.status, typeof detail === "string" ? detail : `Request failed (${response.status})`);
+  const message = typeof detail === "string" ? detail
+    : detail && typeof detail === "object" && "message" in detail && typeof detail.message === "string"
+      ? detail.message : `Request failed (${response.status})`;
+  return new ApiError(response.status, message);
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -57,6 +63,37 @@ export const api = {
   repositories: () => request<RepositorySummary[]>("/repositories"),
   repository: (id: string) => request<RepositoryDetail>(`/repositories/${encodeURIComponent(id)}`),
   indexStatus: (id: string) => request<IndexStatus>(`/repositories/${encodeURIComponent(id)}/index-status`),
+  modelsConfig: () => request<ModelsConfig>("/models/config"),
+  files: (id: string, path = "") => request<FileTreeEntry[]>(`/repositories/${encodeURIComponent(id)}/files${path ? `?path=${encodeURIComponent(path)}` : ""}`),
+  symbols: (id: string, query: string) => request<CodeSymbol[]>(`/repositories/${encodeURIComponent(id)}/symbols?q=${encodeURIComponent(query)}`),
+  fileContent: (id: string, path: string, startLine?: number, endLine?: number) => {
+    const params = new URLSearchParams({ path });
+    if (startLine !== undefined && endLine !== undefined) {
+      params.set("start_line", String(startLine));
+      params.set("end_line", String(endLine));
+    }
+    return request<FileContent>(`/repositories/${encodeURIComponent(id)}/files/content?${params}`);
+  },
+  ask: (id: string, question: string, modelSlot: ModelSlot) => request<{ agent_run_id: string; answer: RepositoryAnswer }>(
+    `/repositories/${encodeURIComponent(id)}/ask`, json("POST", { question, model_slot: modelSlot })),
+  flowTrace: (id: string, question: string, modelSlot: ModelSlot) => request<{ agent_run_id: string; trace: FlowTraceResponse }>(
+    `/repositories/${encodeURIComponent(id)}/flow-trace`, json("POST", { question, model_slot: modelSlot })),
+  changeImpact: (id: string, changeDescription: string, modelSlot: ModelSlot) => request<{ agent_run_id: string; impact: ChangeImpactResponse }>(
+    `/repositories/${encodeURIComponent(id)}/change-impact`, json("POST", { change_description: changeDescription, model_slot: modelSlot })),
+  architecture: (id: string, modelSlot: ModelSlot) => request<ArchitectureResponse>(
+    `/repositories/${encodeURIComponent(id)}/architecture?model_slot=${modelSlot}`),
+  compareModels: (id: string, question: string) => request<ModelComparisonResponse>(
+    `/repositories/${encodeURIComponent(id)}/compare-models`, json("POST", { question })),
+  memory: (id: string) => request<RepositoryMemory[]>(`/repositories/${encodeURIComponent(id)}/memory?include_stale=true`),
+  findings: (id: string) => request<Finding[]>(`/repositories/${encodeURIComponent(id)}/findings`),
+  saveFinding: (id: string, type: "FLOW_TRACE" | "IMPACT", content: Record<string, unknown>, evidenceIds: string[]) => request<Finding>(
+    `/repositories/${encodeURIComponent(id)}/findings`, json("POST", { type, content, evidence_ids: evidenceIds })),
+  resolveEvidence: (id: string, evidenceIds: string[]) => {
+    const params = new URLSearchParams();
+    evidenceIds.forEach((item) => params.append("ids", item));
+    return request<ResolvedEvidenceLink[]>(`/repositories/${encodeURIComponent(id)}/evidence?${params}`);
+  },
+  agentTrace: (runId: string) => request<AgentTrace>(`/agent-runs/${encodeURIComponent(runId)}/trace`),
 };
 
 export function uploadRepository(file: File, onProgress: (percent: number) => void): Promise<RepositoryImport> {

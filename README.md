@@ -12,6 +12,8 @@ Phase 20 adds backend change-impact analysis and GitHub incremental synchronizat
 
 Phase 24 adds the first five frontend screens: authentication, dashboard, repository import by GitHub or ZIP, GitHub repository and branch selection, and indexing status. The frontend uses typed API calls and polls active index states. A repository branch-list endpoint exposes the existing GitHub client capability to the picker.
 
+Phase 25 adds the repository workspace with file and symbol browsing, Ask, Flow Trace, Change Impact, Architecture, peer Model Comparison, evidence file viewing, and an expandable Agent Trace. Repository Memory, saved Findings, and GitHub connection settings are available from the frontend. Memory and finding evidence links resolve against the current index; stale IDs remain visible without a current file link.
+
 ## Local setup
 
 Prerequisites: Python 3.11 or newer, Node.js 20 or newer, and Docker with Docker Compose.
@@ -40,4 +42,4 @@ The authenticated API covers repository import, browsing, index status, code ana
 
 Installation state is short-lived, single-use, and bound to the authenticated Prism user who requested the install URL. The callback verifies through a GitHub user access token that the installation is accessible to the GitHub user before persisting it. User and installation tokens are not stored. Do not place the private key, client secret, installation tokens, or user tokens in the frontend, repository, logs, or model context.
 
-Status: Phase 24 complete
+Status: Phase 25 complete
