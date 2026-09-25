@@ -768,7 +768,7 @@ Any OpenAI-compatible hosted endpoint may be configured here without changing bu
 - `RepositoryAnswer{answer, evidence: list[Evidence], confidence: Literal["high","medium","low"], limitations: str | None}`
 - `FlowTraceResponse{summary, steps: list[FlowStep], evidence: list[Evidence]}` where `FlowStep{order, file, symbol, start_line, end_line, explanation, relationship_to_next: str | None, unresolved: bool, evidence_ids: list[UUID]}`
 - `ChangeImpactResponse{requested_change, directly_affected: list[ImpactItem], likely_indirectly_affected: list[ImpactItem], evidence: list[Evidence]}` where `ImpactItem{file, symbol, reason, confidence, evidence_ids, recommended_action, tests_to_inspect: list[str]}`
-- `ArchitectureResponse{languages, main_folders, frameworks_detected, entrypoints, backend_boundary, frontend_boundary, database_layer, api_organization, auth_locations, test_locations, evidence}`
+- `ArchitectureResponse{summary: str, languages: dict[str, int], main_folders, frameworks_detected, entrypoints, backend_boundary, frontend_boundary, database_layer, api_organization, auth_locations, test_locations, evidence}`
 - `ModelComparisonResponse{question, evidence_context_id, results: list[ModelResult]}` where `ModelResult{slot, model_name, response, latency_ms, input_tokens, output_tokens, validation_status, error}`
 - (Optional) `CodeReviewResponse{findings: list[CodeReviewFinding]}`, `CodeReviewFinding{title, category, severity, confidence[confirmed|likely|potential|requires_further_inspection], status, description, evidence, recommendation, limitations}`
 

@@ -51,7 +51,8 @@ class ChangeImpactResponse(BaseModel):
 
 
 class ArchitectureResponse(BaseModel):
-    languages: list[str]
+    summary: str
+    languages: dict[str, int]
     main_folders: list[str]
     frameworks_detected: list[str]
     entrypoints: list[str]

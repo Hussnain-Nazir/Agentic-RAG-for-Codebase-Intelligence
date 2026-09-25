@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +19,7 @@ from app.agent.classification import (
     extract_reference_symbol,
     extract_symbol,
 )
+from app.agent.architecture import ArchitectureNarration, validate_architecture_summary
 from app.agent.investigations.flow_trace import (
     FlowInvestigationState,
     enforce_observed_transitions,
@@ -128,10 +129,13 @@ def _architecture_template() -> str:
     return ARCHITECTURE_PROMPT_PATH.read_text(encoding="utf-8")
 
 
-def _architecture_from_summary(summary: ArchitectureSummary) -> ArchitectureResponse:
+def _architecture_from_summary(
+    summary: ArchitectureSummary, narrated: ArchitectureNarration
+) -> ArchitectureResponse:
     folders = summary.top_level_folders
     return ArchitectureResponse(
-        languages=list(summary.languages),
+        summary=narrated.summary.strip(),
+        languages=summary.languages,
         main_folders=folders,
         frameworks_detected=summary.frameworks_detected,
         entrypoints=summary.likely_entrypoints,
@@ -281,7 +285,7 @@ class AgentController:
                 )
                 .replace(
                     "{{RESPONSE_SCHEMA}}",
-                    json.dumps(ArchitectureResponse.model_json_schema(), sort_keys=True),
+                    json.dumps(ArchitectureNarration.model_json_schema(), sort_keys=True),
                 )
             )
             system_content, user_content = rendered.split(PROMPT_MESSAGE_SPLIT, 1)
@@ -438,7 +442,7 @@ class AgentController:
                             context,
                             {"architecture": architecture.model_dump(mode="json")},
                         ),
-                        schema=ArchitectureResponse,
+                        schema=ArchitectureNarration,
                         timeout_s=self._timeout_s,
                     )
                 except Exception as model_error:
@@ -458,9 +462,14 @@ class AgentController:
                     model_slot,
                     provider,
                     model_result,
-                    ArchitectureResponse,
+                    ArchitectureNarration,
                     task_type,
                     context,
+                    post_validator=lambda value: validate_architecture_summary(
+                        ArchitectureNarration.model_validate(value).summary,
+                        architecture,
+                    ),
+                    repair_context=architecture.model_dump_json(),
                 )
                 if structured is None:
                     return await self._complete_run(
@@ -470,7 +479,9 @@ class AgentController:
                     run,
                     AgentRunStatus.OK,
                     task_type,
-                    _architecture_from_summary(architecture),
+                    _architecture_from_summary(
+                        architecture, ArchitectureNarration.model_validate(structured)
+                    ),
                     context,
                 )
 
@@ -939,10 +950,14 @@ class AgentController:
         schema: type[BaseModel],
         task_type: TaskType,
         context: EvidenceContext,
+        post_validator: Callable[[BaseModel], None] | None = None,
+        repair_context: str | None = None,
     ) -> BaseModel | None:
         del task_type, context
         try:
             structured = validate_schema(model_result.content, schema)
+            if post_validator is not None:
+                post_validator(structured)
         except SchemaValidationError as validation_error:
             await self._hooks.model_execution(
                 run.id,
@@ -951,7 +966,7 @@ class AgentController:
                 model_result.latency_ms,
                 TokenUsage(model_result.input_tokens, model_result.output_tokens),
                 "INVALID",
-                "Model output failed schema validation",
+                "Model output failed validation",
             )
             if counters.repair_attempts >= MAX_REPAIR_ATTEMPTS:
                 return None
@@ -962,10 +977,18 @@ class AgentController:
                 structured = await attempt_repair(
                     model_result.content,
                     schema,
-                    validation_error,
+                    (
+                        f"{validation_error.detail}\n"
+                        "Use only this deterministic inspection metadata: "
+                        f"{repair_context}"
+                        if repair_context is not None
+                        else validation_error
+                    ),
                     provider,
                     on_result=repair_results.append,
                 )
+                if post_validator is not None:
+                    post_validator(structured)
             except Exception as repair_error:
                 repair_result = repair_results[0] if repair_results else None
                 await self._hooks.model_execution(
