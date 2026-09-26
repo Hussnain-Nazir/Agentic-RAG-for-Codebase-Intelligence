@@ -86,10 +86,7 @@ export function RepositoryTree({ repositoryId, onSelect }: { repositoryId: strin
   const ctx: TreeContext = { repositoryId, search, selectedPath: null, onSelect };
 
   return (
-    <section aria-label="Repository tree" className="panel flex min-w-0 flex-col">
-      <div className="panel-header">
-        <h2 className="text-sm font-medium text-ink-primary">Repository tree</h2>
-      </div>
+    <section aria-label="Repository tree" className="panel flex h-full min-h-0 flex-col">
       <div className="panel-body pb-2">
         <label className="sr-only" htmlFor="tree-search">Search files and symbols</label>
         <div className="relative">
@@ -97,7 +94,7 @@ export function RepositoryTree({ repositoryId, onSelect }: { repositoryId: strin
           <input id="tree-search" className="input pl-8 text-sm" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="File or symbol" />
         </div>
       </div>
-      <ul className="max-h-[26rem] overflow-y-auto px-1 pb-2">
+      <ul className="min-h-0 flex-1 overflow-y-auto px-1 pb-2">
         <TreeChildren path="" depth={0} ctx={ctx} />
       </ul>
       {search.trim() && (

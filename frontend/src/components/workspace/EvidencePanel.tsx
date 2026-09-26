@@ -7,19 +7,21 @@ import { EmptyState } from "../common/EmptyState";
 import { CodeViewer } from "./CodeViewer";
 import type { FileSelection } from "./RepositoryTree";
 
-export function EvidencePanel({ repositoryId, evidence, selected, onSelect }: {
+export function EvidencePanel({ repositoryId, evidence, selected, onSelect, bare = false }: {
   repositoryId: string; evidence: Evidence[]; selected: FileSelection | null;
-  onSelect: (selection: FileSelection) => void;
+  onSelect: (selection: FileSelection) => void; bare?: boolean;
 }) {
   const content = useFileContent(repositoryId, selected?.path ?? null, selected?.startLine, selected?.endLine);
   return (
-    <section aria-label="Evidence panel" className="panel flex min-w-0 flex-col">
-      <div className="panel-header">
-        <h2 className="text-sm font-medium text-ink-primary">Evidence</h2>
-        {evidence.length > 0 && <span className="badge">{evidence.length}</span>}
-      </div>
+    <section aria-label="Evidence panel" className={bare ? "flex min-w-0 flex-col" : "panel flex min-w-0 flex-col"}>
+      {!bare && (
+        <div className="panel-header">
+          <h2 className="text-sm font-medium text-ink-primary">Evidence</h2>
+          {evidence.length > 0 && <span className="badge">{evidence.length}</span>}
+        </div>
+      )}
 
-      <div className="panel-body pb-3">
+      <div className={bare ? "pb-3" : "panel-body pb-3"}>
         {evidence.length === 0 && <p className="text-sm text-ink-muted">Citations will appear after an analysis.</p>}
         <ul className="max-h-56 space-y-2 overflow-y-auto">
           {evidence.map((item) => (

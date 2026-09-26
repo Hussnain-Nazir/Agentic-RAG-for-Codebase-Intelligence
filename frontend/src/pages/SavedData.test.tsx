@@ -28,7 +28,7 @@ it("shows stale memory and resolves current evidence links", async () => {
   ]);
   mount("/repositories/repo-1/memory", <RepositoryMemoryPage />);
   expect(await screen.findByText("Stale")).toBeInTheDocument();
-  expect(await screen.findByRole("link", { name: "auth/security.py:10-12" })).toHaveAttribute("href", "/repositories/repo-1?path=auth%2Fsecurity.py&start_line=10&end_line=12");
+  expect(await screen.findByRole("link", { name: "auth/security.py:10-12" })).toHaveAttribute("href", "/repositories/repo-1/code?path=auth%2Fsecurity.py&start_line=10&end_line=12");
   expect(screen.getByText(/old-chun: no current index detail/)).toBeInTheDocument();
 });
 

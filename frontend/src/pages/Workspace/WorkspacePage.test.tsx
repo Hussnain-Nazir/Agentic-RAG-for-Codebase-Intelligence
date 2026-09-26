@@ -42,7 +42,7 @@ describe("analysis workspace", () => {
     } });
     mount(<AnalysisHarness />);
     fireEvent.change(screen.getByLabelText("Question"), { target: { value: "How does login work?" } });
-    fireEvent.click(screen.getByRole("button", { name: "Run analysis" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
     expect(await screen.findByText("Login issues a token.")).toBeInTheDocument();
     expect(screen.getByText("Confidence: high")).toBeInTheDocument();
     expect(api.ask).toHaveBeenCalledWith("repo-1", "How does login work?", "A");
@@ -58,7 +58,7 @@ describe("analysis workspace", () => {
     mount(<AnalysisHarness />);
     fireEvent.click(screen.getByRole("tab", { name: "Flow Trace" }));
     fireEvent.change(screen.getByLabelText("Question"), { target: { value: "Trace login" } });
-    fireEvent.click(screen.getByRole("button", { name: "Run analysis" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
     expect(await screen.findByText("Login flow")).toBeInTheDocument();
     const items = screen.getAllByRole("listitem");
     expect(within(items[0]).getByText("1. login")).toBeInTheDocument();
@@ -79,7 +79,7 @@ describe("analysis workspace", () => {
     mount(<AnalysisHarness />);
     fireEvent.click(screen.getByRole("tab", { name: "Change Impact" }));
     fireEvent.change(screen.getByLabelText("Describe the proposed change"), { target: { value: "Change User organizations" } });
-    fireEvent.click(screen.getByRole("button", { name: "Run analysis" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
     expect(await screen.findByText("Directly affected")).toBeInTheDocument();
     expect(screen.getByText("Likely indirectly affected")).toBeInTheDocument();
     expect(screen.getByText("Relation changes.")).toBeInTheDocument();
@@ -112,9 +112,9 @@ describe("analysis workspace", () => {
         { slot: "B", model_name: "model-b", response: { answer: "Answer B", evidence: [evidence], confidence: "medium", limitations: null }, latency_ms: 12, input_tokens: 22, output_tokens: 32, validation_status: "VALID", error: null },
       ],
     });
-    mount(<AnalysisHarness initialMode="compare" />);
+    mount(<AnalysisHarness />);
     fireEvent.change(screen.getByLabelText("Question"), { target: { value: "How does login work?" } });
-    fireEvent.click(screen.getByRole("button", { name: "Compare Models" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ask & Compare" }));
     expect(await screen.findByText("Answer A")).toBeInTheDocument();
     expect(screen.getByText("Answer B")).toBeInTheDocument();
     expect(screen.getByText(/20 input tokens/)).toBeInTheDocument();
@@ -170,7 +170,7 @@ describe("independent panels", () => {
     vi.spyOn(api, "files").mockRejectedValue(new Error("File tree unavailable"));
     mount(<div><RepositoryTree repositoryId="repo-1" onSelect={() => {}} /><AnalysisHarness /></div>);
     expect(await screen.findByText("File tree unavailable")).toBeInTheDocument();
-    expect(screen.getByText("Ask a question to get started.")).toBeInTheDocument();
+    expect(screen.getByText("Ask anything about this repository.")).toBeInTheDocument();
   });
 
   it("shows analysis loading and error in its own panel", async () => {
@@ -178,7 +178,7 @@ describe("independent panels", () => {
     vi.spyOn(api, "ask").mockImplementation(() => new Promise((_, reject) => { fail = reject; }));
     mount(<AnalysisHarness />);
     fireEvent.change(screen.getByLabelText("Question"), { target: { value: "Where is login?" } });
-    fireEvent.click(screen.getByRole("button", { name: "Run analysis" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
     expect(await screen.findByText("Gathering evidence and validating the result...")).toBeInTheDocument();
     fail(new Error("Analysis unavailable"));
     expect(await screen.findByText("Analysis unavailable")).toBeInTheDocument();

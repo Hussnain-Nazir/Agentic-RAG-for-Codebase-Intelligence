@@ -34,8 +34,8 @@ const tokenClass: Record<string, string> = {
   plain: "text-ink-primary",
 };
 
-export function CodeViewer({ path, content, startLine, highlightStart, highlightEnd }: {
-  path: string; content: string; startLine: number; highlightStart?: number | null; highlightEnd?: number | null;
+export function CodeViewer({ path, content, startLine, highlightStart, highlightEnd, fill = false }: {
+  path: string; content: string; startLine: number; highlightStart?: number | null; highlightEnd?: number | null; fill?: boolean;
 }) {
   const [copied, setCopied] = useState<"path" | "code" | null>(null);
   const lines = content.split("\n");
@@ -49,8 +49,8 @@ export function CodeViewer({ path, content, startLine, highlightStart, highlight
   }
 
   return (
-    <div className="code-surface overflow-hidden">
-      <div className="sticky top-0 flex items-center justify-between gap-3 border-b border-border bg-surface-2 px-3 py-2 font-sans">
+    <div className={fill ? "code-surface flex h-full flex-col overflow-hidden" : "code-surface overflow-hidden"}>
+      <div className="sticky top-0 flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface-2 px-3 py-2 font-sans">
         <span className="truncate text-xs text-ink-secondary">{path}</span>
         <div className="flex shrink-0 items-center gap-1">
           <button type="button" className="icon-button" title="Copy path" onClick={() => void copy("path", path)}>
@@ -61,7 +61,7 @@ export function CodeViewer({ path, content, startLine, highlightStart, highlight
           </button>
         </div>
       </div>
-      <div className="max-h-[26rem] overflow-auto">
+      <div className={fill ? "min-h-0 flex-1 overflow-auto" : "max-h-[26rem] overflow-auto"}>
         <table className="w-full border-collapse">
           <tbody>
             {lines.map((line, index) => {

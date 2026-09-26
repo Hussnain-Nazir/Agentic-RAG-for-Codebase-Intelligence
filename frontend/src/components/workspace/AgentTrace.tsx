@@ -24,7 +24,7 @@ export function AgentTrace({ runId }: { runId: string | null }) {
   const trace = useAgentTrace(runId);
 
   return (
-    <section aria-label="Agent trace" className="panel mt-6">
+    <section aria-label="Agent trace" className="panel">
       <div className="panel-header">
         <h2 className="flex items-center gap-2 text-sm font-medium text-ink-primary">
           <ListTree size={15} strokeWidth={1.75} className="text-ink-muted" /> Agent Trace

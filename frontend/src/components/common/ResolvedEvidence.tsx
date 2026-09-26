@@ -21,7 +21,7 @@ export function ResolvedEvidence({ repositoryId, ids, links }: {
           <li key={id}>
             <Link
               className="inline-flex items-center gap-1 rounded-full border border-border-strong bg-surface-3 px-2.5 py-1 font-mono text-accent-hover transition-colors duration-150 hover:border-accent-muted"
-              to={`/repositories/${repositoryId}?${params}`}
+              to={`/repositories/${repositoryId}/code?${params}`}
             >
               <MapPin size={11} strokeWidth={2} />
               {link.file_path}:{link.start_line}-{link.end_line}
