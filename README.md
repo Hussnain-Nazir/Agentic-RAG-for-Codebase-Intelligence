@@ -31,6 +31,10 @@ For direct development, install `backend/requirements.txt` and run `uvicorn app.
 
 The authenticated API covers repository import, browsing, index status, code analysis, memory, findings, agent traces, and repository deletion. See [PRISM_SPEC.md section 26](PRISM_SPEC.md#26-rest-api-specification) for the endpoint contracts and error cases. Evidence-backed code review remains optional and is not exposed yet.
 
+## Evaluation
+
+Phase 26 evaluation work is recorded in [the evaluation report](backend/tests/eval/report.json) and [coverage report](backend/tests/eval/COVERAGE.md). The 25-question deterministic demo-repository run measured Hit@12 at 100%, citation validity at 100%, ordered flow-step recall at 93.33%, and indirect-impact precision at 90%. Core coverage was 92.07% on the runnable backend test subset. Full-suite verification remains pending because temporary-directory tests cannot write in this session's Windows sandbox.
+
 ## [MANUAL] GitHub App setup
 
 1. Create a GitHub App with read-only Contents and Metadata permissions. Disable webhooks unless a later phase explicitly adds them.

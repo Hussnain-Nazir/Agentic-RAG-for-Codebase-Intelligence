@@ -260,6 +260,27 @@ def test_evidence_quality_rejects_low_semantic_only_matches() -> None:
     assert classify_evidence_quality(evidence) is EvidenceQuality.NONE
 
 
+def test_evidence_quality_accepts_a_queried_symbol_present_in_a_merged_chunk() -> None:
+    candidate = make_candidate(
+        901,
+        score=0.3,
+        content="def create_user_item():\n    return insert_item()\n",
+        symbol_name=None,
+        contributing_signals=("lexical", "symbol"),
+        raw_signal_scores={"lexical": 0.3, "symbol": 0.2},
+        relationship_metadata={"contained_symbols": [
+            {"name": "create_user_item", "match_type": "fuzzy"}
+        ]},
+    )
+    evidence = build_evidence([candidate])
+    assert classify_evidence_quality(
+        evidence, "How does `create_user_item` delegate to `insert_item`?"
+    ) is EvidenceQuality.INCOMPLETE
+    assert classify_evidence_quality(
+        evidence, "How does absent_payment_hook work?"
+    ) is EvidenceQuality.NONE
+
+
 @pytest.mark.parametrize("signal", ["lexical", "symbol"])
 def test_evidence_quality_accepts_explicit_nonsemantic_signal(signal: str) -> None:
     evidence = build_evidence(

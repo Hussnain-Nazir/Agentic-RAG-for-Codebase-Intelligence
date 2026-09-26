@@ -545,20 +545,44 @@ def deterministic_flow_trace(
     partial_reason: str | None = None,
 ) -> FlowTraceResponse:
     steps: list[FlowStep] = []
-    available_evidence_ids = {item.evidence_id for item in evidence}
+    available_evidence = {item.evidence_id: item for item in evidence}
     visible_ids = [
         node_id for node_id in state.ordered_path()
         if state.nodes[node_id].file_path is not None
         and state.nodes[node_id].start_line is not None
         and state.nodes[node_id].end_line is not None
         and any(
-            item in available_evidence_ids
+            item in available_evidence
+            and available_evidence[item].file_path == state.nodes[node_id].file_path
+            and available_evidence[item].start_line is not None
+            and available_evidence[item].end_line is not None
             for item in state.nodes[node_id].evidence_ids
         )
     ]
     for index, node_id in enumerate(visible_ids):
         node = state.nodes[node_id]
-        evidence_ids = [item for item in node.evidence_ids if item in available_evidence_ids]
+        candidates = [
+            available_evidence[item] for item in node.evidence_ids
+            if item in available_evidence
+            and available_evidence[item].file_path == node.file_path
+            and available_evidence[item].start_line is not None
+            and available_evidence[item].end_line is not None
+        ]
+        compatible = [
+            item for item in candidates
+            if abs(item.start_line - node.start_line) <= 5
+            and abs(item.end_line - node.end_line) <= 5
+        ]
+        start_line, end_line = node.start_line, node.end_line
+        if not compatible:
+            anchor = candidates[0]
+            start_line, end_line = anchor.start_line, anchor.end_line
+            compatible = [
+                item for item in candidates
+                if abs(item.start_line - start_line) <= 5
+                and abs(item.end_line - end_line) <= 5
+            ]
+        evidence_ids = [item.evidence_id for item in compatible]
         next_id = visible_ids[index + 1] if index + 1 < len(visible_ids) else None
         edge = state.edge_between(node_id, next_id) if next_id else None
         unresolved = node.unresolved
@@ -567,8 +591,8 @@ def deterministic_flow_trace(
                 order=len(steps) + 1,
                 file=node.file_path,
                 symbol=node.symbol,
-                start_line=node.start_line,
-                end_line=node.end_line,
+                start_line=start_line,
+                end_line=end_line,
                 explanation=(
                     f"The investigation could not resolve {node.symbol}."
                     if node.unresolved

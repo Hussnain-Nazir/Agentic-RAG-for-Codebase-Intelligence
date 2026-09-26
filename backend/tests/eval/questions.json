@@ -1,0 +1,31 @@
+[
+  {"id":"symbol-token","category":"symbol","question":"Find `create_access_token`","expected_files":["backend/demo_app/security.py"],"expected_symbols":["create_access_token"]},
+  {"id":"symbol-current-user","category":"symbol","question":"Find `get_current_user`","expected_files":["backend/demo_app/security.py"],"expected_symbols":["get_current_user"]},
+  {"id":"symbol-owner","category":"symbol","question":"Find `require_item_owner`","expected_files":["backend/demo_app/services.py"],"expected_symbols":["require_item_owner"]},
+  {"id":"symbol-login-form","category":"symbol","question":"Find `LoginForm`","expected_files":["frontend/src/LoginForm.tsx"],"expected_symbols":["LoginForm"]},
+  {"id":"symbol-create-api","category":"symbol","question":"Find `createItem`","expected_files":["frontend/src/api.ts"],"expected_symbols":["createItem"]},
+  {"id":"symbol-list-route","category":"symbol","question":"Find `list_items`","expected_files":["backend/demo_app/routes/items.py"],"expected_symbols":["list_items"]},
+
+  {"id":"qa-token","category":"qa","question":"How does `create_access_token` issue a JWT?","expected_files":["backend/demo_app/security.py"],"expected_symbols":["create_access_token"]},
+  {"id":"qa-password","category":"qa","question":"How does `authenticate_user` verify a password?","expected_files":["backend/demo_app/services.py"],"expected_symbols":["authenticate_user"]},
+  {"id":"qa-owner","category":"qa","question":"Where does `require_item_owner` enforce item ownership?","expected_files":["backend/demo_app/services.py"],"expected_symbols":["require_item_owner"]},
+  {"id":"qa-list","category":"qa","question":"What does `select_items_for_user` query?","expected_files":["backend/demo_app/repositories.py"],"expected_symbols":["select_items_for_user"]},
+  {"id":"qa-login-form","category":"qa","question":"How does `LoginForm` submit credentials?","expected_files":["frontend/src/LoginForm.tsx"],"expected_symbols":["LoginForm"]},
+  {"id":"qa-create-item","category":"qa","question":"How does `create_user_item` delegate to `insert_item`?","expected_files":["backend/demo_app/services.py"],"expected_symbols":["create_user_item"]},
+
+  {"id":"architecture-overview","category":"architecture","question":"Explain the repository architecture.","expected_languages":["python","typescript","tsx"],"expected_frameworks":["FastAPI","React"]},
+  {"id":"architecture-languages","category":"architecture","question":"Which languages are indexed in the architecture?","expected_languages":["python","typescript","tsx"],"expected_frameworks":["FastAPI","React"]},
+  {"id":"architecture-layout","category":"architecture","question":"Explain the backend and frontend boundaries.","expected_languages":["python","typescript","tsx"],"expected_frameworks":["FastAPI","React"]},
+
+  {"id":"flow-login","category":"flow","question":"Trace `login` to `create_access_token`.","expected_steps":[["backend/demo_app/routes/auth.py","login"],["backend/demo_app/security.py","create_access_token"]]},
+  {"id":"flow-authenticate","category":"flow","question":"Trace `login` to `authenticate_user`.","expected_steps":[["backend/demo_app/routes/auth.py","login"],["backend/demo_app/services.py","authenticate_user"]]},
+  {"id":"flow-list","category":"flow","question":"Trace `list_items` from the items route to `select_items_for_user`.","expected_steps":[["backend/demo_app/routes/items.py","list_items"],["backend/demo_app/services.py","list_user_items"],["backend/demo_app/repositories.py","select_items_for_user"]]},
+  {"id":"flow-update","category":"flow","question":"Trace `update_user_item` to `require_item_owner`.","expected_steps":[["backend/demo_app/services.py","update_user_item"],["backend/demo_app/services.py","require_item_owner"]]},
+  {"id":"flow-create","category":"flow","question":"Trace `create_user_item` to `insert_item`.","expected_steps":[["backend/demo_app/services.py","create_user_item"],["backend/demo_app/repositories.py","insert_item"]]},
+
+  {"id":"impact-auth","category":"impact","question":"What is affected if `get_current_user` changes?","expected_direct":[["backend/demo_app/security.py","get_current_user"]],"expected_indirect":[["backend/demo_app/routes/items.py","list_items"],["backend/demo_app/routes/items.py","create_item"]]},
+  {"id":"impact-owner","category":"impact","question":"What is affected if `require_item_owner` changes?","expected_direct":[["backend/demo_app/services.py","require_item_owner"]],"expected_indirect":[["backend/demo_app/services.py","update_user_item"],["backend/demo_app/services.py","delete_user_item"]]},
+  {"id":"impact-token","category":"impact","question":"What is affected if `create_access_token` changes?","expected_direct":[["backend/demo_app/security.py","create_access_token"]],"expected_indirect":[["backend/demo_app/routes/auth.py","login"]]},
+  {"id":"impact-item","category":"impact","question":"What is affected if `Item` changes?","expected_direct":[["backend/demo_app/models.py","Item"],["frontend/src/types.ts","Item"]],"expected_indirect":[["frontend/src/ItemList.tsx","ItemList"]]},
+  {"id":"impact-org","category":"impact","question":"What would be affected if `User` could belong to multiple organizations?","expected_direct":[["backend/demo_app/models.py","User"]],"expected_indirect":[["backend/demo_app/services.py","register_user"]]}
+]

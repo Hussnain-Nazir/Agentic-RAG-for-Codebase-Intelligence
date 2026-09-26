@@ -62,10 +62,11 @@ def _raw_semantic_score(item: Evidence) -> float:
     return 0.0
 
 
-def _has_exact_symbol_match(evidence: list[Evidence]) -> bool:
+def _has_exact_symbol_match(evidence: list[Evidence], query: str | None) -> bool:
+    query_identifiers = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", query or ""))
     return any(
-        contained.get("match_type")
-        in {"exact_case_sensitive", "exact_case_insensitive"}
+        contained.get("match_type") in {"exact_case_sensitive", "exact_case_insensitive"}
+        or contained.get("name") in query_identifiers
         for item in evidence
         for contained in item.relationship_metadata.get("contained_symbols", [])
     )
@@ -96,7 +97,7 @@ def classify_evidence_quality(
 ) -> EvidenceQuality:
     if not evidence:
         return EvidenceQuality.NONE
-    has_symbol = _has_exact_symbol_match(evidence) or (
+    has_symbol = _has_exact_symbol_match(evidence, query) or (
         query is None and any("symbol" in _signals(item) for item in evidence)
     )
     has_lexical_or_symbol = _has_distinctive_lexical_coverage(
