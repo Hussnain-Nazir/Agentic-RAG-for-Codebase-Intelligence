@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.code_chunk import CodeChunk
+from app.ingestion.filtering import is_secret_file
 from app.models.repository_file import RepositoryFile, RepositoryFileStatus
 from app.plugins.file_reading.errors import (
     BinaryFileError,
@@ -112,7 +113,7 @@ async def _validated_file(
     await authorize_repository(session, repository_id, ctx)
     normalized = _normalize_path(path)
     repository_file = await _current_file(session, repository_id, normalized)
-    if PurePosixPath(normalized).suffix.lower() not in SUPPORTED_EXTENSIONS:
+    if is_secret_file(normalized) or PurePosixPath(normalized).suffix.lower() not in SUPPORTED_EXTENSIONS:
         raise UnsupportedFileTypeError("Unsupported file type")
     if repository_file.status is RepositoryFileStatus.BINARY:
         raise BinaryFileError("Binary files cannot be read")

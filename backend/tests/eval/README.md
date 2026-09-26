@@ -34,5 +34,5 @@ Current measured summary: 25 questions, Hit@12 100%, expected file/symbol
 recall 100%, citation validity 100%, grounded responses 100%, invalid
 references 0%, ordered flow-step recall 93.33%, direct-impact recall and
 precision 100%, indirect-impact recall 100% and precision 90%. Core coverage
-is 92.07% on the runnable subset; see [COVERAGE.md](COVERAGE.md) for the
-command and its environment limit.
+is 92.52% on the complete backend suite; see [COVERAGE.md](COVERAGE.md) for the
+command and full report.

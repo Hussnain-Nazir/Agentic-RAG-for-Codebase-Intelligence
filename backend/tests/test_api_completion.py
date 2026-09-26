@@ -13,6 +13,8 @@ from app.models import (
     CodeRelationship,
     CodeSymbol,
     Finding,
+    MemoryItem,
+    Message,
     ModelExecution,
     ModelSlot,
     Repository,
@@ -356,6 +358,8 @@ def test_delete_repository_removes_all_existing_dependent_rows(qa_context) -> No
             conversation = Session(user_id=repository.owner_id, repository_id=repository.id)
             session.add(conversation)
             await session.flush()
+            session.add(Message(session_id=conversation.id, role="user", content="Saved conversation"))
+            session.add(MemoryItem(repository_id=repository.id, repository_index_version=1, scope="repository", topic="legacy", content="Legacy fact"))
             run = AgentRun(session_id=conversation.id, task_type="REPOSITORY_QA", status=AgentRunStatus.OK)
             session.add(run)
             await session.flush()
@@ -378,8 +382,10 @@ def test_delete_repository_removes_all_existing_dependent_rows(qa_context) -> No
                 (CodeSymbol, CodeSymbol.repository_index_id.in_(index_ids)),
                 (CodeRelationship, CodeRelationship.repository_index_id.in_(index_ids)),
                 (RepositoryMemory, RepositoryMemory.repository_id == repository.id),
+                (MemoryItem, MemoryItem.repository_id == repository.id),
                 (Finding, Finding.repository_id == repository.id),
                 (Session, Session.repository_id == repository.id),
+                (Message, Message.session_id == session_id),
                 (AgentRun, AgentRun.session_id == session_id),
                 (ToolCall, ToolCall.agent_run_id == run_id),
                 (ModelExecution, ModelExecution.agent_run_id == run_id),

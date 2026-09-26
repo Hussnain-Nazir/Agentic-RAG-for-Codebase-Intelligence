@@ -67,9 +67,7 @@ async def test_serpapi_success_maps_documented_organic_results(web_session) -> N
         settings=Settings(serpapi_api_key="test-only-key"),
         client=client,
     )
-    output = await SearchWebTool(web_session, provider).execute(
-        SearchWebInput(query="Python official docs"), ExecutionContext()
-    )
+    output = await SearchWebTool(web_session, provider).search("Python official docs")
 
     assert len(requests) == 1
     assert output.error is None

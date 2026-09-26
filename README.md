@@ -23,7 +23,7 @@ Prerequisites: Python 3.11 or newer, Node.js 20 or newer, and Docker with Docker
 3. Open the frontend at `http://localhost:5173`.
 4. Check the backend at `http://localhost:8000/health`.
 
-For web-search development, set `SERPAPI_API_KEY` in `.env`. The key is server-side only and must never be placed in frontend configuration, logs, cached web-source rows, or model context. Prism calls SerpAPI only when the later agent-classification phase explicitly selects the external-document task path.
+For web-search development, set `SERPAPI_API_KEY` in `.env`. The key is server-side only and must never be placed in frontend configuration, logs, cached web-source rows, or model context. Prism calls SerpAPI only when the controller explicitly selects the external-document task path.
 
 For direct development, install `backend/requirements.txt` and run `uvicorn app.main:app --reload` from `backend/`. Run `npm install` followed by `npm run dev` from `frontend/`. The Vite server proxies `/api` to `http://localhost:8000`; set `VITE_DEV_API_TARGET` when the backend is at another address.
 
@@ -33,7 +33,11 @@ The authenticated API covers repository import, browsing, index status, code ana
 
 ## Evaluation
 
-Phase 26 evaluation work is recorded in [the evaluation report](backend/tests/eval/report.json) and [coverage report](backend/tests/eval/COVERAGE.md). The 25-question deterministic demo-repository run measured Hit@12 at 100%, citation validity at 100%, ordered flow-step recall at 93.33%, and indirect-impact precision at 90%. Core coverage was 92.07% on the runnable backend test subset. Full-suite verification remains pending because temporary-directory tests cannot write in this session's Windows sandbox.
+Phase 26 evaluation work is recorded in [the evaluation report](backend/tests/eval/report.json) and [coverage report](backend/tests/eval/COVERAGE.md). The 25-question deterministic demo-repository run measured Hit@12 at 100%, citation validity at 100%, ordered flow-step recall at 93.33%, and indirect-impact precision at 90%. The complete backend suite now passes, including the previously blocked temporary-directory tests. Core coverage is 92.52%.
+
+## Security review
+
+[SECURITY_REVIEW.md](backend/SECURITY_REVIEW.md) maps every section 28.1 threat and section 28.3 privacy requirement to automated checks. Phase 27 adds exhaustive route/tool ownership checks, cross-repository isolation, prompt-injection and secret-exclusion tests, ZIP edge cases, bounded model-payload checks, escaped-content XSS coverage, and extended deletion verification. Web-tool execution now checks repository ownership, and file reading also rejects secret filenames in seeded rows.
 
 ## [MANUAL] GitHub App setup
 
@@ -46,4 +50,4 @@ Phase 26 evaluation work is recorded in [the evaluation report](backend/tests/ev
 
 Installation state is short-lived, single-use, and bound to the authenticated Prism user who requested the install URL. The callback verifies through a GitHub user access token that the installation is accessible to the GitHub user before persisting it. User and installation tokens are not stored. Do not place the private key, client secret, installation tokens, or user tokens in the frontend, repository, logs, or model context.
 
-Status: Phase 25 complete
+Status: Phase 27 complete

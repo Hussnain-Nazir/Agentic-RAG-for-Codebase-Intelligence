@@ -362,6 +362,18 @@ describe("independent panels", () => {
     expect(screen.getByText("javascript:alert(1)")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "javascript:alert(1)" })).not.toBeInTheDocument();
   });
+  it("renders script-bearing evidence and file content as escaped text", async () => {
+    const payload = '<script>window.phase27Executed = true</script><img src=x onerror="window.phase27Executed=true">';
+    const probe = window as Window & { phase27Executed?: boolean };
+    probe.phase27Executed = false;
+    vi.spyOn(api, "fileContent").mockResolvedValue({ path: "auth/security.py", language: "python", content: payload, start_line: 10, end_line: 12, total_lines: 30, truncated: false });
+    const result = mount(<EvidencePanel repositoryId="repo-1" evidence={[{ ...evidence, content_excerpt: payload }]} selected={{ path: "auth/security.py", startLine: 10, endLine: 12 }} onSelect={() => {}} />);
+    await waitFor(() => expect(result.container.querySelector("pre")?.textContent).toBe(payload));
+    expect(result.container.querySelector("script")).toBeNull();
+    expect(result.container.querySelector("img")).toBeNull();
+    expect(probe.phase27Executed).toBe(false);
+    delete probe.phase27Executed;
+  });
   it("opens the selected evidence file at the cited range", async () => {
     vi.spyOn(api, "fileContent").mockResolvedValue({ path: "auth/security.py", language: "python", content: "def create_token(): pass", start_line: 10, end_line: 12, total_lines: 30, truncated: false });
     function Harness() {

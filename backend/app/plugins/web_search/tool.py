@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.web_source import WebSource
 from app.plugins.web_search.provider import WebResult, WebSearchProvider
 from app.tools.base import ExecutionContext
+from app.tools.errors import UnauthorizedRepositoryAccessError
+from app.tools.repository_context import authorize_repository
 
 WEB_SEARCH_TIMEOUT_SECONDS = 8
 WEB_CACHE_TTL = timedelta(hours=24)
@@ -65,7 +67,9 @@ class SearchWebTool:
         self._provider = provider
 
     async def execute(self, input: BaseModel, ctx: ExecutionContext) -> BaseModel:
-        del ctx
+        if ctx.repository_id is None:
+            raise UnauthorizedRepositoryAccessError("Repository context is required")
+        await authorize_repository(self._session, ctx.repository_id, ctx)
         request = SearchWebInput.model_validate(input)
         return await self.search(request.query, request.max_results)
 
