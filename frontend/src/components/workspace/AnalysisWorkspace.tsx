@@ -19,7 +19,13 @@ export type AnalysisView =
   | { mode: "architecture"; data: ArchitectureResponse; runId: string }
   | { mode: "compare"; data: ModelComparisonResponse; runId: string };
 
-interface Turn { question: string; view: AnalysisView }
+interface Turn {
+  id: number;
+  question: string;
+  view: AnalysisView | null;
+  error: string | null;
+  pending: boolean;
+}
 
 export function evidenceForView(view: AnalysisView | null): Evidence[] {
   if (!view) return [];
@@ -205,6 +211,7 @@ export function AnalysisWorkspace({ repositoryId, modelSlot, mode, onModeChange,
   const [question, setQuestion] = useState("");
   const [history, setHistory] = useState<Turn[]>([]);
   const requestVersion = useRef(0);
+  const nextTurnId = useRef(0);
   const analysis = useAnalysis(repositoryId);
   const save = useSaveFinding(repositoryId);
   const canSave = view?.mode === "flow" || view?.mode === "impact";
@@ -221,6 +228,9 @@ export function AnalysisWorkspace({ repositoryId, modelSlot, mode, onModeChange,
     if (mode !== "architecture" && !question.trim()) return;
     const version = ++requestVersion.current;
     const askedQuestion = question.trim();
+    const turnId = ++nextTurnId.current;
+    setQuestion("");
+    setHistory((previous) => [...previous, { id: turnId, question: askedQuestion, view: null, error: null, pending: true }]);
     onResult(null);
     save.reset();
     try {
@@ -233,9 +243,12 @@ export function AnalysisWorkspace({ repositoryId, modelSlot, mode, onModeChange,
       else if ("results" in response) next = { mode: "compare", data: response, runId: response.agent_run_id };
       else next = { mode: "architecture", data: response, runId: response.agent_run_id };
       onResult(next);
-      setHistory((prev) => [...prev, { question: askedQuestion, view: next }]);
-      setQuestion("");
-    } catch { /* The mutation error is shown in this panel. */ }
+      setHistory((previous) => previous.map((turn) => turn.id === turnId ? { ...turn, view: next, pending: false } : turn));
+    } catch (error) {
+      if (version !== requestVersion.current) return;
+      const message = error instanceof Error ? error.message : "Analysis unavailable";
+      setHistory((previous) => previous.map((turn) => turn.id === turnId ? { ...turn, error: message, pending: false } : turn));
+    }
   }
 
   async function saveFinding() {
@@ -287,13 +300,15 @@ export function AnalysisWorkspace({ repositoryId, modelSlot, mode, onModeChange,
           )}
 
           <div className="space-y-8">
-            {history.map((turn, index) => (
-              <div key={index} className="animate-fade-in">
+            {history.map((turn) => (
+              <div key={turn.id} data-testid="conversation-turn" className="animate-fade-in">
                 {mode !== "architecture" && (
                   <p className="mb-3 text-[15px] font-medium text-ink-primary">{turn.question}</p>
                 )}
-                <ResultContent view={turn.view} onOpenEvidence={onOpenEvidence} />
-                {canSave && turn === history[history.length - 1] && (
+                {turn.pending && <div className="mt-6 flex items-center gap-2 text-sm text-ink-secondary"><span className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-accent" />Gathering evidence and validating the result...</div>}
+                {turn.error && <div className="mt-3"><ErrorNotice message={turn.error} /></div>}
+                {turn.view && <ResultContent view={turn.view} onOpenEvidence={onOpenEvidence} />}
+                {turn.view && canSave && turn === history[history.length - 1] && (
                   <div className="mt-4 border-t border-border-subtle pt-4">
                     <button type="button" className="button-secondary" disabled={save.isPending || save.isSuccess || evidenceIds.length === 0} onClick={() => void saveFinding()}>
                       <Save size={14} strokeWidth={1.75} />
@@ -307,13 +322,6 @@ export function AnalysisWorkspace({ repositoryId, modelSlot, mode, onModeChange,
             ))}
           </div>
 
-          {analysis.isPending && (
-            <div className="mt-6 flex items-center gap-2 text-sm text-ink-secondary">
-              <span className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-accent" />
-              Gathering evidence and validating the result...
-            </div>
-          )}
-          {analysis.isError && <div className="mt-6"><ErrorNotice message={analysis.error.message} onRetry={() => void submit("ask")} /></div>}
         </div>
       </div>
 

@@ -37,6 +37,33 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("analysis workspace", () => {
   it.each([
+    ["ask", "Codebase Q&A", "Question", "Ask"],
+    ["flow", "Flow Trace", "Question", "Ask"],
+    ["impact", "Change Impact", "Describe the proposed change", "Ask"],
+    ["compare", "Codebase Q&A", "Question", "Ask & Compare"],
+  ] as const)("clears the %s draft on send and keeps a failed question in its turn", async (kind, tab, label, button) => {
+    let rejectRequest!: (reason?: unknown) => void;
+    const pending = new Promise<never>((_, reject) => { rejectRequest = reject; });
+    if (kind === "ask") vi.spyOn(api, "ask").mockReturnValue(pending);
+    if (kind === "flow") vi.spyOn(api, "flowTrace").mockReturnValue(pending);
+    if (kind === "impact") vi.spyOn(api, "changeImpact").mockReturnValue(pending);
+    if (kind === "compare") vi.spyOn(api, "compareModels").mockReturnValue(pending);
+    mount(<AnalysisHarness />);
+    if (kind === "flow" || kind === "impact") fireEvent.click(screen.getByRole("tab", { name: tab }));
+    const input = screen.getByLabelText(label) as HTMLTextAreaElement;
+    const question = `Investigate ${kind} submission`;
+    fireEvent.change(input, { target: { value: question } });
+    fireEvent.click(screen.getByRole("button", { name: button }));
+    expect(input).toHaveValue("");
+    expect(within(screen.getByTestId("conversation-turn")).getByText(question)).toBeInTheDocument();
+    expect(within(screen.getByTestId("conversation-turn")).getByText("Gathering evidence and validating the result...")).toBeInTheDocument();
+    rejectRequest(new Error("Selected request failed"));
+    expect(await within(screen.getByTestId("conversation-turn")).findByText("Selected request failed")).toBeInTheDocument();
+    expect(within(screen.getByTestId("conversation-turn")).getByText(question)).toBeInTheDocument();
+    expect(input).toHaveValue("");
+  });
+
+  it.each([
     ["ask", "Codebase Q&A", "Answer cleared"],
     ["flow", "Flow Trace", "Flow cleared"],
     ["impact", "Change Impact", "Requested change: Impact cleared"],
