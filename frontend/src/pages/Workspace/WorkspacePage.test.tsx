@@ -3,10 +3,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import type { ReactNode } from "react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { api } from "../../api/client";
+import { api, authToken } from "../../api/client";
+import { conversationKey, writeConversation } from "../../api/conversations";
 import type { Evidence, ModelSlot } from "../../api/types";
 import { AgentTrace } from "../../components/workspace/AgentTrace";
 import { AnalysisWorkspace } from "../../components/workspace/AnalysisWorkspace";
@@ -14,6 +15,16 @@ import type { AnalysisMode, AnalysisView } from "../../components/workspace/Anal
 import { EvidencePanel } from "../../components/workspace/EvidencePanel";
 import { RepositoryTree } from "../../components/workspace/RepositoryTree";
 import type { FileSelection } from "../../components/workspace/RepositoryTree";
+import { AnalyzeTab } from "./AnalyzeTab";
+import { CodeTab } from "./CodeTab";
+import { TraceTab } from "./TraceTab";
+import { WorkspacePage } from "./WorkspacePage";
+import { RepositoryMemoryPage } from "../RepositoryMemory/RepositoryMemoryPage";
+import { FindingsPage } from "../Findings/FindingsPage";
+
+const FIRST_USER = "11111111-1111-4111-8111-111111111111";
+const SECOND_USER = "22222222-2222-4222-8222-222222222222";
+function tokenFor(userId: string) { return `header.${btoa(JSON.stringify({ sub: userId }))}.signature`; }
 
 const evidence: Evidence = {
   evidence_id: "evidence-1", repository_id: "repo-1", repository_index_id: "index-1",
@@ -27,15 +38,147 @@ function mount(element: ReactNode) {
   return render(<QueryClientProvider client={client}><MemoryRouter>{element}</MemoryRouter></QueryClientProvider>);
 }
 
-function AnalysisHarness({ initialMode = "ask" }: { initialMode?: AnalysisMode }) {
+function AnalysisHarness({ initialMode = "ask", repositoryId = "repo-1" }: { initialMode?: AnalysisMode; repositoryId?: string }) {
   const [mode, setMode] = useState<AnalysisMode>(initialMode);
   const [view, setView] = useState<AnalysisView | null>(null);
-  return <AnalysisWorkspace repositoryId="repo-1" modelSlot={"A" as ModelSlot} mode={mode} onModeChange={setMode} view={view} onResult={setView} />;
+  return <AnalysisWorkspace repositoryId={repositoryId} modelSlot={"A" as ModelSlot} mode={mode} onModeChange={setMode} view={view} onResult={setView} />;
 }
 
-afterEach(() => vi.restoreAllMocks());
+function mountWorkspaceRoutes() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  return render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/repositories/repo-1"]}>
+    <Routes><Route path="/repositories/:id" element={<WorkspacePage />}>
+      <Route index element={<AnalyzeTab />} />
+      <Route path="code" element={<CodeTab />} />
+      <Route path="trace" element={<TraceTab />} />
+      <Route path="memory" element={<RepositoryMemoryPage />} />
+      <Route path="findings" element={<FindingsPage />} />
+    </Route></Routes>
+  </MemoryRouter></QueryClientProvider>);
+}
+
+afterEach(() => { vi.restoreAllMocks(); sessionStorage.clear(); });
 
 describe("analysis workspace", () => {
+  it("keeps the conversation through Code, Agent Trace, Memory, and Findings tab visits", async () => {
+    authToken.set(tokenFor(FIRST_USER));
+    vi.spyOn(api, "repository").mockResolvedValue({ id: "repo-1", name: "Fixture", source_type: "upload", selected_branch: "upload", access_status: "ACTIVE", index: null, owner_id: FIRST_USER, github_repo_id: null, default_branch: "upload", created_at: "2026-09-25T10:00:00Z" });
+    vi.spyOn(api, "modelsConfig").mockResolvedValue({ model_a: { name: "model-a" }, model_b: { name: "model-b" } });
+    vi.spyOn(api, "files").mockResolvedValue([]);
+    vi.spyOn(api, "memory").mockResolvedValue([]);
+    vi.spyOn(api, "findings").mockResolvedValue([]);
+    vi.spyOn(api, "agentTrace").mockResolvedValue({
+      run: { id: "run-1", repository_id: "repo-1", session_id: "session-1", task_type: "REPOSITORY_QA", status: "OK", started_at: "2026-09-25T10:00:00Z", completed_at: "2026-09-25T10:00:01Z" },
+      tool_calls: [], model_executions: [],
+    });
+    vi.spyOn(api, "ask").mockResolvedValue({ agent_run_id: "run-1", answer: { answer: "Tabbed answer", evidence: [], confidence: "low", limitations: null } });
+    mountWorkspaceRoutes();
+    fireEvent.change(screen.getByLabelText("Question"), { target: { value: "Tabbed question" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+    expect(await screen.findByText("Tabbed answer")).toBeInTheDocument();
+    const workspaceNav = screen.getByRole("navigation", { name: "Repository workspace" });
+    for (const tab of ["Code", "Agent Trace", "Memory", "Findings"]) {
+      fireEvent.click(within(workspaceNav).getByRole("link", { name: tab }));
+      fireEvent.click(within(workspaceNav).getByRole("link", { name: "Analyze" }));
+      expect(screen.getByText("Tabbed question")).toBeInTheDocument();
+      expect(screen.getByText("Tabbed answer")).toBeInTheDocument();
+    }
+    expect(api.ask).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps prior turns visible when switching among all four analysis modes", async () => {
+    authToken.set(tokenFor(FIRST_USER));
+    vi.spyOn(api, "ask").mockResolvedValue({ agent_run_id: "run-1", answer: { answer: "Stored answer", evidence: [evidence], confidence: "high", limitations: null } });
+    mount(<AnalysisHarness />);
+    fireEvent.change(screen.getByLabelText("Question"), { target: { value: "Where is login?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+    expect(await screen.findByText("Stored answer")).toBeInTheDocument();
+    for (const tab of ["Flow Trace", "Change Impact", "Architecture", "Codebase Q&A"]) {
+      fireEvent.click(screen.getByRole("tab", { name: tab }));
+      expect(screen.getByText("Where is login?")).toBeInTheDocument();
+      expect(screen.getByText("Stored answer")).toBeInTheDocument();
+    }
+  });
+
+  it("restores Q&A and Q&A comparison turns after an Analyze remount", async () => {
+    authToken.set(tokenFor(FIRST_USER));
+    vi.spyOn(api, "ask").mockResolvedValue({ agent_run_id: "run-1", answer: { answer: "Stored Q&A", evidence: [evidence], confidence: "high", limitations: null } });
+    vi.spyOn(api, "compareModels").mockResolvedValue({
+      agent_run_id: "run-2", question: "Compare login", evidence_context_id: "ctx-1",
+      results: [
+        { slot: "A", model_name: "model-a", response: { answer: "Stored A", evidence: [evidence], confidence: "high", limitations: null }, latency_ms: 10, input_tokens: 20, output_tokens: 30, validation_status: "VALID", error: null },
+        { slot: "B", model_name: "model-b", response: { answer: "Stored B", evidence: [evidence], confidence: "medium", limitations: null }, latency_ms: 11, input_tokens: 21, output_tokens: 31, validation_status: "VALID", error: null },
+      ],
+    });
+    const first = mount(<AnalysisHarness />);
+    fireEvent.change(screen.getByLabelText("Question"), { target: { value: "Explain login" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+    expect(await screen.findByText("Stored Q&A")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Question"), { target: { value: "Compare login" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ask & Compare" }));
+    expect(await screen.findByText("Stored A")).toBeInTheDocument();
+    expect(screen.getByText("Stored B")).toBeInTheDocument();
+    expect(sessionStorage.getItem(conversationKey(authToken.get(), "repo-1")!)).toContain("Stored B");
+    first.unmount();
+    mount(<AnalysisHarness />);
+    expect(screen.getByText("Explain login")).toBeInTheDocument();
+    expect(screen.getByText("Stored Q&A")).toBeInTheDocument();
+    expect(screen.getByText("Compare login")).toBeInTheDocument();
+    expect(screen.getByText("Stored A")).toBeInTheDocument();
+    expect(screen.getByText("Stored B")).toBeInTheDocument();
+    expect(api.ask).toHaveBeenCalledTimes(1);
+    expect(api.compareModels).toHaveBeenCalledTimes(1);
+  });
+
+  it("isolates stored turns by repository and authenticated user", async () => {
+    authToken.set(tokenFor(FIRST_USER));
+    vi.spyOn(api, "ask").mockResolvedValue({ agent_run_id: "run-1", answer: { answer: "Private answer", evidence: [], confidence: "low", limitations: null } });
+    const first = mount(<AnalysisHarness />);
+    fireEvent.change(screen.getByLabelText("Question"), { target: { value: "Private question" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+    expect(await screen.findByText("Private answer")).toBeInTheDocument();
+    first.unmount();
+    const secondRepository = mount(<AnalysisHarness repositoryId="repo-2" />);
+    expect(screen.queryByText("Private answer")).not.toBeInTheDocument();
+    secondRepository.unmount();
+    authToken.set(tokenFor(SECOND_USER));
+    const secondUser = mount(<AnalysisHarness />);
+    expect(screen.queryByText("Private answer")).not.toBeInTheDocument();
+    secondUser.unmount();
+    authToken.set(tokenFor(FIRST_USER));
+    mount(<AnalysisHarness />);
+    expect(screen.getByText("Private answer")).toBeInTheDocument();
+  });
+
+  it("removes both visible and stored turns only when Clear Conversation is pressed", async () => {
+    authToken.set(tokenFor(FIRST_USER));
+    vi.spyOn(api, "ask").mockResolvedValue({ agent_run_id: "run-1", answer: { answer: "Clearable answer", evidence: [], confidence: "low", limitations: null } });
+    const first = mount(<AnalysisHarness />);
+    fireEvent.change(screen.getByLabelText("Question"), { target: { value: "Clearable question" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+    expect(await screen.findByText("Clearable answer")).toBeInTheDocument();
+    const key = conversationKey(authToken.get(), "repo-1")!;
+    expect(sessionStorage.getItem(key)).toContain("Clearable answer");
+    fireEvent.click(screen.getByRole("button", { name: "Clear Conversation" }));
+    expect(screen.queryByText("Clearable answer")).not.toBeInTheDocument();
+    expect(sessionStorage.getItem(key)).toBeNull();
+    first.unmount();
+    mount(<AnalysisHarness />);
+    expect(screen.queryByText("Clearable answer")).not.toBeInTheDocument();
+  });
+
+  it("guards oversized or unavailable session storage without breaking the composer", () => {
+    authToken.set(tokenFor(FIRST_USER));
+    const key = conversationKey(authToken.get(), "repo-1")!;
+    expect(writeConversation(key, [{ question: "x".repeat(1_100_000) }])).toBe(false);
+    expect(sessionStorage.getItem(key)).toBeNull();
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("quota", "QuotaExceededError"); });
+    expect(writeConversation(key, [{ question: "small" }])).toBe(false);
+    setItem.mockRestore();
+    mount(<AnalysisHarness />);
+    expect(screen.getByLabelText("Question")).toBeInTheDocument();
+  });
+
   it.each([
     ["ask", "Codebase Q&A", "Question", "Ask"],
     ["flow", "Flow Trace", "Question", "Ask"],

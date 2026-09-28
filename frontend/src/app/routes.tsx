@@ -1,6 +1,7 @@
-import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Outlet, Route, Routes, useLocation, useParams } from "react-router-dom";
 
 import { authToken } from "../api/client";
+import { conversationKey } from "../api/conversations";
 import { AddRepositoryPage } from "../pages/AddRepository/AddRepositoryPage";
 import { DashboardPage } from "../pages/Dashboard/DashboardPage";
 import { GitHubPickerPage } from "../pages/GitHubPicker/GitHubPickerPage";
@@ -25,6 +26,11 @@ function RootRedirect() {
   return <Navigate to={new URLSearchParams(location.search).get("github") === "connected" ? "/repositories/new/github" : "/dashboard"} replace />;
 }
 
+function ScopedWorkspace() {
+  const { id = "" } = useParams();
+  return <WorkspacePage key={conversationKey(authToken.get(), id) ?? id} />;
+}
+
 export function AppRoutes() {
   return (
     <Routes>
@@ -36,7 +42,7 @@ export function AppRoutes() {
         <Route path="/repositories/new" element={<AddRepositoryPage />} />
         <Route path="/repositories/new/github" element={<GitHubPickerPage />} />
         <Route path="/repositories/:id/indexing" element={<IndexingStatusPage />} />
-        <Route path="/repositories/:id" element={<WorkspacePage />}>
+        <Route path="/repositories/:id" element={<ScopedWorkspace />}>
           <Route index element={<AnalyzeTab />} />
           <Route path="code" element={<CodeTab />} />
           <Route path="trace" element={<TraceTab />} />

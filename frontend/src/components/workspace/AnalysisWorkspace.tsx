@@ -5,6 +5,8 @@ import {
 } from "lucide-react";
 
 import { useAnalysis, useSaveFinding } from "../../api/hooks";
+import { authToken } from "../../api/client";
+import { clearConversation as clearStoredConversation, conversationKey, readConversation, writeConversation } from "../../api/conversations";
 import type {
   ArchitectureResponse, ChangeImpactResponse, Evidence, FlowTraceResponse,
   ModelComparisonResponse, ModelSlot, RepositoryAnswer,
@@ -22,9 +24,38 @@ export type AnalysisView =
 interface Turn {
   id: number;
   question: string;
+  mode: AnalysisMode;
   view: AnalysisView | null;
   error: string | null;
   pending: boolean;
+}
+
+function isStoredView(value: unknown): value is AnalysisView {
+  if (!value || typeof value !== "object") return false;
+  const view = value as { mode?: unknown; runId?: unknown; data?: unknown };
+  if (typeof view.runId !== "string" || !view.data || typeof view.data !== "object") return false;
+  const data = view.data as Record<string, unknown>;
+  switch (view.mode) {
+    case "ask": return typeof data.answer === "string" && Array.isArray(data.evidence);
+    case "flow": return typeof data.summary === "string" && Array.isArray(data.steps) && Array.isArray(data.evidence);
+    case "impact": return typeof data.requested_change === "string" && Array.isArray(data.directly_affected) && Array.isArray(data.likely_indirectly_affected) && Array.isArray(data.evidence);
+    case "architecture": return typeof data.summary === "string" && Array.isArray(data.evidence) && Array.isArray(data.main_folders);
+    case "compare": return typeof data.question === "string" && Array.isArray(data.results);
+    default: return false;
+  }
+}
+
+function restoredTurns(key: string | null): Turn[] {
+  const modes: AnalysisMode[] = ["ask", "flow", "impact", "architecture"];
+  return readConversation<unknown>(key).filter((value): value is Turn => {
+    if (!value || typeof value !== "object") return false;
+    const turn = value as Partial<Turn>;
+    return typeof turn.id === "number" && typeof turn.question === "string"
+      && modes.includes(turn.mode as AnalysisMode)
+      && typeof turn.pending === "boolean"
+      && (turn.error === null || typeof turn.error === "string")
+      && (turn.view === null || isStoredView(turn.view));
+  }).map((turn) => turn.pending ? { ...turn, pending: false, error: "The request was interrupted by a page reload." } : turn);
 }
 
 export function evidenceForView(view: AnalysisView | null): Evidence[] {
@@ -209,20 +240,24 @@ export function AnalysisWorkspace({ repositoryId, modelSlot, mode, onModeChange,
   onClear?: () => void;
 }) {
   const [question, setQuestion] = useState("");
-  const [history, setHistory] = useState<Turn[]>([]);
+  const storageKey = conversationKey(authToken.get(), repositoryId);
+  const [history, setHistory] = useState<Turn[]>(() => restoredTurns(storageKey));
+  const [storageWarning, setStorageWarning] = useState(false);
   const requestVersion = useRef(0);
-  const nextTurnId = useRef(0);
+  const nextTurnId = useRef(Math.max(0, ...history.map((turn) => turn.id)));
   const analysis = useAnalysis(repositoryId);
   const save = useSaveFinding(repositoryId);
   const canSave = view?.mode === "flow" || view?.mode === "impact";
   const evidenceIds = canSave ? durableEvidenceIds(evidenceForView(view)) : [];
 
   useEffect(() => {
-    requestVersion.current += 1;
-    analysis.reset();
-    save.reset();
-    setHistory([]);
-  }, [mode]);
+    setStorageWarning(!writeConversation(storageKey, history));
+  }, [storageKey, history]);
+
+  useEffect(() => {
+    const latestView = [...history].reverse().find((turn) => turn.view)?.view;
+    if (latestView) onResult(latestView);
+  }, []);
 
   async function submit(kind: "ask" | "compare") {
     if (mode !== "architecture" && !question.trim()) return;
@@ -230,7 +265,7 @@ export function AnalysisWorkspace({ repositoryId, modelSlot, mode, onModeChange,
     const askedQuestion = question.trim();
     const turnId = ++nextTurnId.current;
     setQuestion("");
-    setHistory((previous) => [...previous, { id: turnId, question: askedQuestion, view: null, error: null, pending: true }]);
+    setHistory((previous) => [...previous, { id: turnId, question: askedQuestion, mode, view: null, error: null, pending: true }]);
     onResult(null);
     save.reset();
     try {
@@ -265,6 +300,8 @@ export function AnalysisWorkspace({ repositoryId, modelSlot, mode, onModeChange,
     analysis.reset();
     save.reset();
     setHistory([]);
+    clearStoredConversation(storageKey);
+    setStorageWarning(false);
     setQuestion("");
     onResult(null);
     onClear?.();
@@ -282,7 +319,7 @@ export function AnalysisWorkspace({ repositoryId, modelSlot, mode, onModeChange,
             aria-selected={mode === tab.mode}
             type="button"
             className="tab-trigger"
-            onClick={() => { onModeChange(tab.mode); onResult(null); }}
+            onClick={() => onModeChange(tab.mode)}
           >
             <tab.icon size={14} strokeWidth={1.75} /> {tab.label}
           </button>
@@ -302,7 +339,7 @@ export function AnalysisWorkspace({ repositoryId, modelSlot, mode, onModeChange,
           <div className="space-y-8">
             {history.map((turn) => (
               <div key={turn.id} data-testid="conversation-turn" className="animate-fade-in">
-                {mode !== "architecture" && (
+                {turn.mode !== "architecture" && (
                   <p className="mb-3 text-[15px] font-medium text-ink-primary">{turn.question}</p>
                 )}
                 {turn.pending && <div className="mt-6 flex items-center gap-2 text-sm text-ink-secondary"><span className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-accent" />Gathering evidence and validating the result...</div>}
@@ -321,6 +358,7 @@ export function AnalysisWorkspace({ repositoryId, modelSlot, mode, onModeChange,
               </div>
             ))}
           </div>
+          {storageWarning && <p role="status" className="mt-4 text-xs text-warning">This conversation is too large to save in this tab. It remains visible until you leave the page.</p>}
 
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { ArrowUpRight, X } from "lucide-react";
 
@@ -20,6 +20,17 @@ export function AnalyzeTab() {
   const [view, setView] = useState<AnalysisView | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<FileSelection | null>(null);
+  const previousRepositoryId = useRef(repositoryId);
+
+  useEffect(() => {
+    if (previousRepositoryId.current === repositoryId) return;
+    previousRepositoryId.current = repositoryId;
+    setMode("ask");
+    setView(null);
+    setDrawerOpen(false);
+    setSelectedFile(null);
+    setLastRunId(null);
+  }, [repositoryId, setLastRunId]);
 
   useEffect(() => {
     if (models.data && !models.data.model_a.name && models.data.model_b.name) setSlot("B");
@@ -63,6 +74,7 @@ export function AnalyzeTab() {
     <div className="relative flex h-full min-h-0">
       <div className="min-w-0 flex-1">
         <AnalysisWorkspace
+          key={repositoryId}
           repositoryId={repositoryId}
           modelSlot={slot}
           mode={mode}

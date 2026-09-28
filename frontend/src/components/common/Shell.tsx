@@ -5,6 +5,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { AlertTriangle, FolderGit2, LogOut, PanelLeftClose, PanelLeftOpen, PlusSquare, Settings } from "lucide-react";
 
 import { authToken } from "../../api/client";
+import { clearAllConversations } from "../../api/conversations";
 import { PrismLogo } from "./PrismLogo";
 
 const navItems = [
@@ -18,6 +19,7 @@ function PrimarySidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
   const location = useLocation();
 
   function signOut() {
+    clearAllConversations();
     authToken.clear();
     queryClient.clear();
     navigate("/login", { replace: true });

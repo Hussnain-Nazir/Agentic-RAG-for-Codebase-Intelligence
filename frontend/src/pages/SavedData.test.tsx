@@ -7,6 +7,7 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { api } from "../api/client";
 import { authToken } from "../api/client";
+import { conversationKey, writeConversation } from "../api/conversations";
 import { Shell } from "../components/common/Shell";
 import { FindingsPage } from "./Findings/FindingsPage";
 import { RepositoryMemoryPage } from "./RepositoryMemory/RepositoryMemoryPage";
@@ -53,4 +54,21 @@ it("clears cached repository data when signing out", () => {
   fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
   expect(authToken.get()).toBeNull();
   expect(client.getQueryData(["repositories"])).toBeUndefined();
+});
+
+it("removes every user's stored conversations on sign-out", () => {
+  const userOne = "11111111-1111-4111-8111-111111111111";
+  const userTwo = "22222222-2222-4222-8222-222222222222";
+  const token = (subject: string) => `header.${btoa(JSON.stringify({ sub: subject }))}.signature`;
+  const firstKey = conversationKey(token(userOne), "repo-1")!;
+  const secondKey = conversationKey(token(userTwo), "repo-2")!;
+  writeConversation(firstKey, [{ question: "first" }]);
+  writeConversation(secondKey, [{ question: "second" }]);
+  authToken.set(token(userOne));
+  const client = new QueryClient();
+  render(<QueryClientProvider client={client}><MemoryRouter><Shell title="Settings">Content</Shell></MemoryRouter></QueryClientProvider>);
+  fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+  expect(sessionStorage.getItem(firstKey)).toBeNull();
+  expect(sessionStorage.getItem(secondKey)).toBeNull();
+  expect(authToken.get()).toBeNull();
 });
