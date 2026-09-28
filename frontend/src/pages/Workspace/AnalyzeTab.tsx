@@ -71,6 +71,7 @@ export function AnalyzeTab() {
           onResult={handleResult}
           onOpenEvidence={openEvidence}
           composerLeft={modelDropdown}
+          onClear={() => { setLastRunId(null); setSelectedFile(null); setDrawerOpen(false); }}
         />
       </div>
 

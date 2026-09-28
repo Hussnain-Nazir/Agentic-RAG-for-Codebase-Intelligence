@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import {
-  ArrowUp, GitCompare, Layers, MapPin, MessageSquareText, Milestone, Save, Waypoints,
+  ArrowUp, GitCompare, Layers, MapPin, MessageSquareText, Milestone, Save, Trash2, Waypoints,
 } from "lucide-react";
 
 import { useAnalysis, useSaveFinding } from "../../api/hooks";
@@ -194,12 +194,13 @@ const tabs: { mode: AnalysisMode; label: string; icon: typeof MessageSquareText 
   { mode: "architecture", label: "Architecture", icon: Layers },
 ];
 
-export function AnalysisWorkspace({ repositoryId, modelSlot, mode, onModeChange, view, onResult, onOpenEvidence, composerLeft }: {
+export function AnalysisWorkspace({ repositoryId, modelSlot, mode, onModeChange, view, onResult, onOpenEvidence, composerLeft, onClear }: {
   repositoryId: string; modelSlot: ModelSlot; mode: AnalysisMode;
   onModeChange: (mode: AnalysisMode) => void; view: AnalysisView | null;
   onResult: (view: AnalysisView | null) => void;
   onOpenEvidence?: (evidence: Evidence) => void;
   composerLeft?: ReactNode;
+  onClear?: () => void;
 }) {
   const [question, setQuestion] = useState("");
   const [history, setHistory] = useState<Turn[]>([]);
@@ -244,6 +245,16 @@ export function AnalysisWorkspace({ repositoryId, modelSlot, mode, onModeChange,
     const title = view.mode === "flow" ? `Flow trace: ${lastQuestion}` : `Impact: ${lastQuestion}`;
     try { await save.mutateAsync({ type, content: { ...view.data, title }, evidenceIds }); }
     catch { /* Save error is shown below. */ }
+  }
+
+  function clearConversation() {
+    requestVersion.current += 1;
+    analysis.reset();
+    save.reset();
+    setHistory([]);
+    setQuestion("");
+    onResult(null);
+    onClear?.();
   }
 
   const modeLabel = tabs.find((tab) => tab.mode === mode)?.label ?? "Codebase Q&A";
@@ -320,7 +331,12 @@ export function AnalysisWorkspace({ repositoryId, modelSlot, mode, onModeChange,
           />
         )}
         <div className="mt-2 flex items-center justify-between gap-3">
-          <div className="min-w-0">{composerLeft}</div>
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="min-w-0">{composerLeft}</div>
+            <button type="button" className="button-ghost shrink-0" aria-label="Clear Conversation" disabled={history.length === 0 && !question.trim() && !analysis.isPending && !analysis.isError} onClick={clearConversation}>
+              <Trash2 size={14} strokeWidth={1.75} /> Clear Conversation
+            </button>
+          </div>
           <div className="flex shrink-0 items-center gap-2">
             <button type="button" className="button-primary" disabled={analysis.isPending || (mode !== "architecture" && !question.trim())} onClick={() => void submit("ask")}>
               {analysis.isPending ? "Investigating..." : mode === "architecture" ? "Explain architecture" : "Ask"}

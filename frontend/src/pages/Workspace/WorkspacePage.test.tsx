@@ -36,6 +36,28 @@ function AnalysisHarness({ initialMode = "ask" }: { initialMode?: AnalysisMode }
 afterEach(() => vi.restoreAllMocks());
 
 describe("analysis workspace", () => {
+  it.each([
+    ["ask", "Codebase Q&A", "Answer cleared"],
+    ["flow", "Flow Trace", "Flow cleared"],
+    ["impact", "Change Impact", "Requested change: Impact cleared"],
+    ["architecture", "Architecture", "Architecture cleared"],
+  ] as const)("clears the shared client-side conversation in %s mode", async (mode, tabLabel, resultText) => {
+    const ask = vi.spyOn(api, "ask").mockResolvedValue({ agent_run_id: "run-ask", answer: { answer: "Answer cleared", evidence: [], confidence: "low", limitations: null } });
+    const flow = vi.spyOn(api, "flowTrace").mockResolvedValue({ agent_run_id: "run-flow", trace: { summary: "Flow cleared", steps: [], evidence: [] } });
+    const impact = vi.spyOn(api, "changeImpact").mockResolvedValue({ agent_run_id: "run-impact", impact: { requested_change: "Impact cleared", directly_affected: [], likely_indirectly_affected: [], evidence: [] } });
+    const architecture = vi.spyOn(api, "architecture").mockResolvedValue({ agent_run_id: "run-architecture", summary: "Architecture cleared", languages: {}, main_folders: [], frameworks_detected: [], entrypoints: [], backend_boundary: null, frontend_boundary: null, database_layer: null, api_organization: null, auth_locations: [], test_locations: [], evidence: [] });
+    mount(<AnalysisHarness />);
+    if (mode !== "ask") fireEvent.click(screen.getByRole("tab", { name: tabLabel }));
+    if (mode !== "architecture") fireEvent.change(screen.getByLabelText(mode === "impact" ? "Describe the proposed change" : "Question"), { target: { value: "Clear this request" } });
+    fireEvent.click(screen.getByRole("button", { name: mode === "architecture" ? "Explain architecture" : "Ask" }));
+    expect(await screen.findByText(resultText)).toBeInTheDocument();
+    const callsBefore = [ask, flow, impact, architecture].reduce((sum, spy) => sum + spy.mock.calls.length, 0);
+    fireEvent.click(screen.getByRole("button", { name: "Clear Conversation" }));
+    expect(screen.queryByText(resultText)).not.toBeInTheDocument();
+    expect(screen.getByText("Ask anything about this repository.")).toBeInTheDocument();
+    expect([ask, flow, impact, architecture].reduce((sum, spy) => sum + spy.mock.calls.length, 0)).toBe(callsBefore);
+    if (mode !== "architecture") expect(screen.getByLabelText(mode === "impact" ? "Describe the proposed change" : "Question")).toHaveValue("");
+  });
   it("renders a grounded Ask response", async () => {
     vi.spyOn(api, "ask").mockResolvedValue({ agent_run_id: "run-1", answer: {
       answer: "Login issues a token.", evidence: [evidence], confidence: "high", limitations: null,
