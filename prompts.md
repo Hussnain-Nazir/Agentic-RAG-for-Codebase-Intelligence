@@ -1165,3 +1165,17 @@
 **Resulting module/commit:** `backend/app/plugins/web_search/tool.py`, `backend/app/plugins/file_reading/tool.py`, `backend/tests/test_security_review.py`, `backend/tests/test_web_plugin.py`, `backend/tests/test_api_completion.py`, frontend XSS test, `backend/SECURITY_REVIEW.md`, evaluation coverage reports, `README.md`, and `prompts.md`. Changes are uncommitted.
 
 **Test result:** The complete backend suite passed with 301 passed and 2 skipped. The skips are opt-in PostgreSQL/pgvector tests requiring PRISM_TEST_POSTGRES_URL. All 17 Phase 27 security cases, bounded-payload checks for both slots, cross-repository isolation, and the expanded real DELETE cascade test passed. Frontend Vitest passed 21 tests; main and demo frontend production builds passed. Full core-module coverage measured 92.52% (2,902 statements, 217 missed), superseding Phase 26's limited-subset coverage report. The backend container was rebuilt and `/health` returned `{"status":"ok"}` after startup.
+
+### 2026-09-28 - Phase 28 deployment readiness
+
+**Prompt:** Read PRISM_SPEC.md section 31 and inspect the existing Compose and Docker setup. Add service health checks and restart policies, verify the PostgreSQL wait, Alembic migration, and Uvicorn entrypoint sequence, add a static frontend build path, create an end-to-end Compose smoke test, and document the deployment architecture. Update the status only after the stack smoke test passes.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Added backend and frontend health checks alongside the existing PostgreSQL check, `unless-stopped` restart policies, configurable PostgreSQL credentials, a database-query readiness loop before Alembic, a multi-stage static frontend Dockerfile with an Nginx API proxy and Compose override, and a Python stack smoke test covering health, registration, fixture ZIP import, grounded Q&A, and trace persistence. Documented both frontend paths and environment groups in README.md.
+
+**Modified/rejected:** The first smoke question was too broad for the existing evidence gate and returned 422 without a model call. The smoke script now asks about the fixture's exact `create_access_token` symbol. No retrieval threshold, bound, product feature, or hosting-provider dependency was changed. The smoke test leaves its throwaway account and repository for inspection.
+
+**Resulting module/commit:** `docker-compose.yml`, `docker-compose.prod.yml`, `.env.example`, `backend/entrypoint.sh`, `backend/scripts/smoke_test_stack.py`, `frontend/Dockerfile.prod`, `frontend/nginx.conf`, `README.md`, and `prompts.md`.
+
+**Test result:** Development and static frontend Compose configurations validated. The complete backend suite passed with 311 passed and 2 opt-in PostgreSQL/pgvector tests skipped; frontend Vitest passed 40 tests and the main frontend build passed outside Docker. `python backend/scripts/smoke_test_stack.py` passed against the final built three-service stack with all services healthy, fixture index `READY`, grounded Q&A, and persisted trace. One preceding attempt recorded a selected-model `ConnectError` and returned 502; the retry passed without a code change. PostgreSQL reported Alembic revision 0014. The static frontend image built, became healthy under its Compose override, and served both the SPA page and proxied `/api/health`. The development frontend stack was restored afterward.

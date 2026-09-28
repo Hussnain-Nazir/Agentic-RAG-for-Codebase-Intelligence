@@ -14,18 +14,26 @@ Phase 24 adds the first five frontend screens: authentication, dashboard, reposi
 
 Phase 25 adds the repository workspace with file and symbol browsing, Ask, Flow Trace, Change Impact, Architecture, peer Model Comparison, evidence file viewing, and an expandable Agent Trace. Repository Memory, saved Findings, and GitHub connection settings are available from the frontend. Memory and finding evidence links resolve against the current index; stale IDs remain visible without a current file link.
 
-## Local setup
+## Deployment and local development
 
-Prerequisites: Python 3.11 or newer, Node.js 20 or newer, and Docker with Docker Compose.
+Prism runs as three services: PostgreSQL with pgvector and a persistent named volume, a FastAPI backend, and a React frontend. Compose waits for PostgreSQL health before starting the backend. The backend entrypoint verifies a database query, applies Alembic migrations, then starts Uvicorn. The frontend starts after the backend health check passes. Each service has a health check and an `unless-stopped` restart policy. No hosting provider is required; the same three services can run on any host that supports Docker Compose or equivalent services.
 
-1. Copy `.env.example` to `.env` and keep all credentials local.
-2. Start all three services with `docker compose up --build`.
-3. Open the frontend at `http://localhost:5173`.
-4. Check the backend at `http://localhost:8000/health`.
+Prerequisites: Python 3.11 or newer, Node.js 20 or newer, and Docker with Docker Compose. Copy `.env.example` to `.env`, replace the sample `JWT_SECRET`, and keep credentials local. The sample database credentials in Compose are for local use; set separate credentials and a matching `DATABASE_URL` before staging deployment.
+
+Environment configuration is grouped as follows:
+
+- Database and authentication: `DATABASE_URL`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `JWT_SECRET`. Match the PostgreSQL variables to `DATABASE_URL`. Changing these variables does not reset credentials in an existing PostgreSQL volume.
+- GitHub App, when used: `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_CALLBACK_SUCCESS_URL`. The private key stays in the read-only `run/secrets/` mount.
+- Model peers: `MODEL_A_NAME`, `MODEL_A_BASE_URL`, `MODEL_A_API_KEY`, `MODEL_A_TIMEOUT`, and the corresponding `MODEL_B_*` variables. Configure at least one complete slot for the stack smoke test.
+- Indexing and web search: `EMBEDDING_MODEL_NAME`, `WEB_SEARCH_PROVIDER`, `WEB_SEARCH_API_KEY`, `SERPAPI_API_KEY`, `MAX_ZIP_SIZE_MB`, `MAX_FILE_SIZE_MB`, `MAX_EXTRACTED_SIZE_MB`, `MAX_EXTRACTED_FILES`, `MAX_CONCURRENT_INDEX_JOBS`.
+
+For local development, run `docker compose up -d --build`. Open the Vite frontend at `http://localhost:5173` and check the backend at `http://localhost:8000/health`. To run the backend and frontend directly, start PostgreSQL with `docker compose up -d postgres`, run `alembic upgrade head` and `uvicorn app.main:app --reload` from `backend/`, then run `npm ci` and `npm run dev` from `frontend/`. The Vite server proxies `/api` to the backend; set `VITE_DEV_API_TARGET` if it is not at `http://localhost:8000`.
+
+For a static frontend deployment, run `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`. `frontend/Dockerfile.prod` builds the Vite bundle and serves it with Nginx on `http://localhost:5173`; Nginx proxies `/api` to the backend. The default Compose file remains the development server path. The static frontend can also be built without replacing the running development service with `docker compose -f docker-compose.yml -f docker-compose.prod.yml build frontend`.
+
+Run `python backend/scripts/smoke_test_stack.py` to build and verify the development stack end to end, or add `--production` to verify the static frontend variant. The script creates a throwaway user and fixture repository, waits for `READY`, makes one Q&A request through a configured model slot, and checks its trace. It leaves those records in the database for inspection. It does not use GitHub or web search.
 
 For web-search development, set `SERPAPI_API_KEY` in `.env`. The key is server-side only and must never be placed in frontend configuration, logs, cached web-source rows, or model context. Prism calls SerpAPI only when the controller explicitly selects the external-document task path.
-
-For direct development, install `backend/requirements.txt` and run `uvicorn app.main:app --reload` from `backend/`. Run `npm install` followed by `npm run dev` from `frontend/`. The Vite server proxies `/api` to `http://localhost:8000`; set `VITE_DEV_API_TARGET` when the backend is at another address.
 
 ## API overview
 
@@ -50,4 +58,4 @@ Phase 26 evaluation work is recorded in [the evaluation report](backend/tests/ev
 
 Installation state is short-lived, single-use, and bound to the authenticated Prism user who requested the install URL. The callback verifies through a GitHub user access token that the installation is accessible to the GitHub user before persisting it. User and installation tokens are not stored. Do not place the private key, client secret, installation tokens, or user tokens in the frontend, repository, logs, or model context.
 
-Status: Phase 27 complete
+Status: Phase 28 complete

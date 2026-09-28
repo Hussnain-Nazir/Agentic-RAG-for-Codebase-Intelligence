@@ -1,20 +1,23 @@
 services:
   postgres:
     image: pgvector/pgvector:pg15
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: prism
-      POSTGRES_USER: prism
-      POSTGRES_PASSWORD: prism
+      POSTGRES_DB: ${POSTGRES_DB:-prism}
+      POSTGRES_USER: ${POSTGRES_USER:-prism}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-prism}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U prism -d prism"]
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 12
+      start_period: 10s
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
   backend:
     build: ./backend
+    restart: unless-stopped
     env_file:
       - path: .env.example
       - path: .env
@@ -26,14 +29,30 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
 
   frontend:
     build: ./frontend
+    restart: unless-stopped
     environment:
       VITE_API_BASE_URL: /api
       VITE_DEV_API_TARGET: http://backend:8000
     ports:
       - "5173:5173"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5173/').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
 volumes:
   postgres_data:

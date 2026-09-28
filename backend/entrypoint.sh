@@ -2,19 +2,35 @@
 set -eu
 
 python - <<'PY'
-import socket
+import asyncio
+import os
 import time
 
-host = "postgres"
-port = 5432
-for attempt in range(30):
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+
+database_url = os.environ.get("DATABASE_URL")
+if not database_url:
+    raise SystemExit("DATABASE_URL is required")
+
+
+async def database_ready():
+    engine = create_async_engine(database_url, connect_args={"timeout": 3})
     try:
-        with socket.create_connection((host, port), timeout=2):
-            break
-    except OSError:
-        if attempt == 29:
-            raise
-        time.sleep(1)
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
+    finally:
+        await engine.dispose()
+
+
+for attempt in range(60):
+    try:
+        asyncio.run(database_ready())
+        break
+    except Exception:
+        if attempt == 59:
+            raise SystemExit("PostgreSQL did not become ready") from None
+        time.sleep(2)
 PY
 
 alembic upgrade head
