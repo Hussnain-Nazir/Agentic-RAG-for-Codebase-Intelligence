@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy import select
 
 from app.agent.architecture import ArchitectureNarration
+from app.llm.base import LLMResult
 from app.llm.mock import MockProvider
 from app.models import AgentRun, ModelExecution, ToolCall
 from app.schemas.responses import ArchitectureResponse
@@ -82,11 +83,11 @@ def test_architecture_uses_inspection_and_one_model_call(qa_context) -> None:
     assert architecture.frameworks_detected == summary.frameworks_detected == ["FastAPI"]
     assert architecture.entrypoints == summary.likely_entrypoints
     assert architecture.test_locations == summary.test_locations
-    assert architecture.auth_locations == ["auth"]
-    assert architecture.api_organization == "routers"
+    assert architecture.auth_locations == summary.auth_locations == ["auth/security.py", "routers/auth.py"]
+    assert architecture.api_organization == summary.api_organization == "routers"
     assert architecture.backend_boundary is None
     assert architecture.frontend_boundary is None
-    assert architecture.database_layer is None
+    assert architecture.database_layer == summary.database_layer == "db.py"
     assert architecture.evidence == []
     assert architecture.languages == {"documentation": 1, "python": 6}
     assert architecture.main_folders == ["auth", "models", "routers"]
@@ -150,9 +151,14 @@ def test_architecture_rejects_invented_summary_after_one_repair(
             models = list(await session.scalars(select(ModelExecution).where(
                 ModelExecution.agent_run_id == run.id
             )))
-            return run.status.value, [item.validation_status for item in models]
+            return run.status.value, [item.validation_status for item in models], [item.error for item in models]
 
-    assert asyncio.run(persisted()) == ("INVALID_OUTPUT", ["INVALID", "INVALID"])
+    status, validations, errors = asyncio.run(persisted())
+    assert status == "INVALID_OUTPUT" and validations == ["INVALID", "INVALID"]
+    assert errors == [
+        "Architecture narration failed inspected-fact validation",
+        "Repair failed inspected-fact validation",
+    ]
 
 
 def test_architecture_accepts_grounded_single_repair(qa_context) -> None:
@@ -188,3 +194,35 @@ def test_architecture_accepts_grounded_single_repair(qa_context) -> None:
     assert calls["count"] == 2
     assert result.json()["summary"].startswith("The repository has 6 Python files")
     assert result.json()["languages"] == {"documentation": 1, "python": 6}
+
+
+def test_architecture_trace_distinguishes_invalid_json_and_failed_repair(qa_context) -> None:
+    client, factory, repository, provider_box, _ = qa_context
+
+    class MalformedProvider:
+        model_name = "malformed-test"
+
+        async def complete(self, messages, schema, timeout_s):
+            del messages, schema, timeout_s
+            return LLMResult(
+                content="{invalid", input_tokens=1, output_tokens=1,
+                latency_ms=1, raw_response={},
+            )
+
+    provider_box["provider"] = MalformedProvider()
+    response = client.get(f"/repositories/{repository.id}/architecture?model_slot=A")
+    assert response.status_code == 422
+
+    async def failures():
+        async with factory() as session:
+            run = await session.scalar(select(AgentRun).where(
+                AgentRun.task_type == "ARCHITECTURE_EXPLANATION"
+            ))
+            return list(await session.scalars(select(ModelExecution.error).where(
+                ModelExecution.agent_run_id == run.id
+            )))
+
+    assert asyncio.run(failures()) == [
+        "Model JSON or schema validation failed",
+        "Repair failed JSON or schema validation",
+    ]

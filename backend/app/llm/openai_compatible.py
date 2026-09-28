@@ -8,9 +8,10 @@ from app.llm.base import LLMResult, Message
 
 
 class LLMProviderRequestError(RuntimeError):
-    def __init__(self, safe_message: str) -> None:
+    def __init__(self, safe_message: str, status_code: int | None = None) -> None:
         super().__init__(safe_message)
         self.safe_message = safe_message
+        self.status_code = status_code
 
 
 def _strict_json_schema(value: Any) -> Any:
@@ -58,6 +59,7 @@ class OpenAICompatibleProvider:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._timeout_s = timeout_s
+        self.timeout_s = timeout_s
         self._transport = transport
 
     async def complete(
@@ -102,7 +104,7 @@ class OpenAICompatibleProvider:
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
                 raise LLMProviderRequestError(
-                    self._safe_provider_error(response)
+                    self._safe_provider_error(response), response.status_code
                 ) from exc
         latency_ms = round((perf_counter() - started_at) * 1000)
 

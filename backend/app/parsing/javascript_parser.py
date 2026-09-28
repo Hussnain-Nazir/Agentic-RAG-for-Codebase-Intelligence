@@ -44,6 +44,7 @@ def _function_metadata(node: Node, source: bytes) -> dict[str, object]:
     direct_calls: set[str] = set()
     references: set[str] = set()
     api_calls: list[str] = []
+    route_calls: list[dict[str, str]] = []
     for descendant in _walk(node):
         if descendant.type == "call_expression":
             called = _callee_name(descendant, source)
@@ -53,8 +54,19 @@ def _function_metadata(node: Node, source: bytes) -> dict[str, object]:
             if called and function is not None and function.type == "identifier":
                 direct_calls.add(called)
             function_text = _text(function, source) if function is not None else ""
+            arguments = descendant.child_by_field_name("arguments")
+            if arguments is not None and arguments.named_children:
+                first = arguments.named_children[0]
+                if first.type == "string":
+                    path = _text(first, source).strip("'\"")
+                    if path.startswith("/"):
+                        method_match = re.search(
+                            r"\bmethod\s*:\s*['\"](GET|POST|PUT|PATCH|DELETE)['\"]",
+                            _text(arguments, source), re.IGNORECASE,
+                        )
+                        method = method_match.group(1).upper() if method_match else "GET"
+                        route_calls.append({"callee": called or "", "path": path, "method": method})
             if function_text == "fetch" or function_text.startswith("axios."):
-                arguments = descendant.child_by_field_name("arguments")
                 if arguments is not None:
                     string_arg = next(
                         (child for child in arguments.named_children if child.type in {"string", "template_string"}),
@@ -69,6 +81,7 @@ def _function_metadata(node: Node, source: bytes) -> dict[str, object]:
         "direct_calls": sorted(direct_calls),
         "references": sorted(references),
         "api_calls": api_calls,
+        "route_calls": route_calls,
     }
 
 
@@ -210,6 +223,20 @@ def _parse_ecmascript(
 
         for child in tree.root_node.children:
             visit(child)
+
+        wrappers = {
+            symbol.name for symbol in symbols
+            if "fetch" in symbol.metadata.get("calls", [])
+        }
+        for symbol in symbols:
+            linked = [
+                call for call in symbol.metadata.get("route_calls", [])
+                if call["callee"] in wrappers or call["callee"] == "fetch"
+                or call["callee"].startswith(("axios.",))
+            ]
+            if linked:
+                symbol.metadata["api_call_details"] = linked
+                symbol.metadata["api_calls"] = sorted({call["path"] for call in linked})
 
         name = PurePosixPath(file_path.replace("\\", "/")).name
         return ParsedFile(

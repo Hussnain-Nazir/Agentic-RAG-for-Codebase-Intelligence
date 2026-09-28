@@ -27,6 +27,14 @@ from app.tools.registry import ToolRegistry
 router = APIRouter(prefix="/repositories", tags=["analysis"])
 
 
+def _provider_message(exc: AgentProviderError) -> str:
+    if exc.category == "timeout":
+        return "The selected model request timed out"
+    if exc.category == "http":
+        return "The selected model provider returned an HTTP error"
+    return "The selected model request failed"
+
+
 class AskRepositoryRequest(BaseModel):
     question: str = Field(min_length=1)
     model_slot: Literal["A", "B"]
@@ -169,7 +177,7 @@ async def explain_architecture(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={
-                "message": "The selected model request failed",
+                "message": _provider_message(exc),
                 "agent_run_id": str(exc.run_id),
             },
         ) from exc
@@ -226,7 +234,7 @@ async def ask_repository(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={
-                "message": "The selected model request failed",
+                "message": _provider_message(exc),
                 "agent_run_id": str(exc.run_id),
             },
         ) from exc
@@ -253,7 +261,10 @@ async def ask_repository(
 
     if result.status is not AgentRunStatus.OK:
         detail: dict[str, object] = {
-            "message": "The model answer failed grounding validation",
+            "message": (
+                "The model output failed structured validation"
+                if result.result is None else "The model answer failed grounding validation"
+            ),
             "agent_run_id": str(result.agent_run_id),
         }
         if result.result is not None:
@@ -313,7 +324,7 @@ async def flow_trace_repository(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={
-                "message": "The selected model request failed",
+                "message": _provider_message(exc),
                 "agent_run_id": str(exc.run_id),
             },
         ) from exc
@@ -391,7 +402,7 @@ async def change_impact_repository(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={
-                "message": "The selected model request failed",
+                "message": _provider_message(exc),
                 "agent_run_id": str(exc.run_id),
             },
         ) from exc

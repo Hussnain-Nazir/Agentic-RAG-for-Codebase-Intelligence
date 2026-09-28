@@ -1,4 +1,5 @@
 import uuid
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
@@ -92,6 +93,28 @@ def _supporting(evidence: list[Evidence], file: str, symbol: str) -> list[uuid.U
     ]
 
 
+def _field_owner_symbol(item: Evidence, fields: list[str]) -> str | None:
+    contained = item.relationship_metadata.get("contained_symbols", [])
+    for offset, line in enumerate(item.content_excerpt.splitlines()):
+        if not any(field in line for field in fields):
+            continue
+        line_number = (item.start_line or 1) + offset
+        owner = next(
+            (entry.get("name") for entry in contained
+             if entry.get("name") and entry.get("start_line", 0) <= line_number <= entry.get("end_line", 0)),
+            None,
+        )
+        if owner:
+            return owner
+        prior_functions = list(re.finditer(
+            r"\b(?:function|def)\s+([A-Za-z_]\w*)\s*\(",
+            "\n".join(item.content_excerpt.splitlines()[:offset + 1]),
+        ))
+        if prior_functions:
+            return prior_functions[-1].group(1)
+    return item.symbol
+
+
 def _preferred_references(
     references: list[CodeReference], direct_keys: set[tuple[str, str]]
 ) -> dict[tuple[str, str], CodeReference]:
@@ -145,15 +168,26 @@ async def investigate_change_impact(
             ),
         )
         state.add_evidence(list(getattr(related, "root", [])))
-        targeted = await execute_tool(
-            "search_codebase",
-            RepositoryQueryInput(
-                repository_id=repository_id,
-                query=state.target_symbol,
-                top_k=12,
-            ),
+        named = list(dict.fromkeys(extract_explicit_symbols(task)))
+        followups = [
+            name for name in named
+            if name != state.target_symbol and (
+                "_" in name or name[:1].isupper()
+            )
+        ]
+        followups.extend(
+            match.group(1) for match in re.finditer(
+                r"\b([A-Za-z_]\w*)\s+(?:schema|request|route|payload|logic)\b",
+                task, re.IGNORECASE,
+            )
         )
-        state.add_evidence(list(getattr(targeted, "root", [])))
+        followups = list(dict.fromkeys(followups))[:3] or [state.target_symbol]
+        for query in followups:
+            targeted = await execute_tool(
+                "search_codebase",
+                RepositoryQueryInput(repository_id=repository_id, query=query, top_k=12),
+            )
+            state.add_evidence(list(getattr(targeted, "root", [])))
         for definition in definitions:
             ids = _supporting(state.evidence, definition.file_path, definition.name)
             if ids:
@@ -206,6 +240,68 @@ async def investigate_change_impact(
                         f"Source evidence in this type, frontend, or test area "
                         f"mentions {state.target_symbol}; inspect for downstream impact."
                     ),
+                    evidence_ids=[item.evidence_id],
+                )
+        field_names = [
+            name for name in named
+            if "_" in name and name in task and name != state.target_symbol
+        ]
+        if field_names:
+            for item in state.evidence:
+                if item.source_type != "CODE" or not item.file_path:
+                    continue
+                content = item.content_excerpt
+                path = item.file_path
+                class_sections = list(re.finditer(r"(?m)^class\s+([A-Za-z_]\w*)\b[^\n]*:\s*$", content))
+                for position, match in enumerate(class_sections):
+                    class_name = match.group(1)
+                    end = class_sections[position + 1].start() if position + 1 < len(class_sections) else len(content)
+                    body = content[match.end():end]
+                    for declaration in re.finditer(r"(?m)^\s{4}([A-Za-z_]\w*)\s*(?::|=)[^\n]*", body):
+                        field_name = declaration.group(1)
+                        if field_name.startswith("__"):
+                            continue
+                        line = declaration.group(0)
+                        if not any(
+                            field in line or field.removesuffix("_id").lower() in line.lower()
+                            for field in field_names
+                        ):
+                            continue
+                        key = (path, f"{class_name}.{field_name}")
+                        state.directly_affected[key] = ImpactCandidate(
+                            file=path, symbol=key[1],
+                            reason="The stored field or relationship declaration uses a named change concept.",
+                            evidence_ids=[item.evidence_id],
+                        )
+                setup_use = (
+                    any(name in content for name in named if name[:1].isupper())
+                    and bool(re.search(r"\b(?:create_all|db\.add|session\.add)\b", content))
+                )
+                if not any(field in content for field in field_names) and not setup_use:
+                    continue
+                symbol = _field_owner_symbol(item, field_names) or next(
+                    (entry.get("name") for entry in item.relationship_metadata.get("contained_symbols", [])
+                     if entry.get("name") and entry.get("name") in content),
+                    None,
+                )
+                if symbol is None:
+                    continue
+                key = (path, symbol)
+                if key in state.directly_affected:
+                    continue
+                signature = re.search(
+                    rf"\b(?:def|function)\s+{re.escape(symbol)}\s*\([^)]*\)",
+                    content, re.DOTALL,
+                )
+                direct = bool(signature and any(field in signature.group(0) for field in field_names))
+                if direct:
+                    state.likely_indirectly_affected.pop(key, None)
+                elif key in state.likely_indirectly_affected:
+                    continue
+                destination = state.directly_affected if direct else state.likely_indirectly_affected
+                destination[key] = ImpactCandidate(
+                    file=path, symbol=symbol,
+                    reason="Stored source uses a named field or relationship in the requested change.",
                     evidence_ids=[item.evidence_id],
                 )
         break

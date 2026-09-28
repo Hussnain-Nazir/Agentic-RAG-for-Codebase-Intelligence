@@ -12,6 +12,7 @@ async def attempt_repair(
     validation_error: SchemaValidationError | str,
     llm_provider: LLMProvider,
     on_result: Callable[[LLMResult], None] | None = None,
+    timeout_s: int | None = None,
 ) -> BaseModel:
     """Make exactly one bounded repair call and validate its response."""
     detail = (
@@ -29,7 +30,7 @@ async def attempt_repair(
     result = await llm_provider.complete(
         messages=[Message(role="user", content=prompt)],
         schema=schema,
-        timeout_s=60,
+        timeout_s=timeout_s or getattr(llm_provider, "timeout_s", 60),
     )
     if on_result is not None:
         on_result(result)

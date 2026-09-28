@@ -86,6 +86,30 @@ def test_compare_models_shares_exact_prompt_and_persists_peer_results(qa_context
     assert slots == {"A", "B"}
 
 
+def test_compare_models_uses_each_peer_timeout(qa_context) -> None:
+    client, _, repository, _, _ = qa_context
+
+    class TimedMock(MockProvider):
+        def __init__(self, timeout_s: int) -> None:
+            super().__init__(callback=lambda messages, schema: _grounded_response(messages, "Supported answer."))
+            self.timeout_s = timeout_s
+            self.seen: list[int] = []
+
+        async def complete(self, messages, schema, timeout_s):
+            self.seen.append(timeout_s)
+            return await super().complete(messages, schema, timeout_s)
+
+    model_a, model_b = TimedMock(17), TimedMock(43)
+    client.app.dependency_overrides[get_analysis_providers] = lambda: {"A": model_a, "B": model_b}
+    response = client.post(
+        f"/repositories/{repository.id}/compare-models",
+        json={"question": "How does authentication work?"},
+    )
+    assert response.status_code == 200
+    assert model_a.seen == [17]
+    assert model_b.seen == [43]
+
+
 def test_compare_models_keeps_success_when_model_b_fails(qa_context) -> None:
     client, session_factory, repository, _, _ = qa_context
 

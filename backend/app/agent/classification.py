@@ -40,6 +40,8 @@ SYMBOL_STOPWORDS = {
     "and",
     "are",
     "does",
+    "explain",
+    "fastapi",
     "for",
     "from",
     "he",
@@ -50,12 +52,16 @@ SYMBOL_STOPWORDS = {
     "it",
     "its",
     "how",
+    "include",
     "in",
     "me",
     "mine",
     "our",
     "ours",
     "she",
+    "sqlalchemy",
+    "show",
+    "suppose",
     "the",
     "their",
     "theirs",
@@ -77,6 +83,38 @@ SYMBOL_STOPWORDS = {
     "your",
     "yours",
 }
+
+MAX_REPOSITORY_SUBQUERIES = 6
+_CLAUSE_BOUNDARY = re.compile(
+    r"(?<=[?.;])\s+|,\s+(?=(?:and\s+)?(?:how|where|what|which)\b)|"
+    r"\s+and\s+(?=(?:how|where|what|which)\b)",
+    re.IGNORECASE,
+)
+
+
+def repository_subqueries(question: str) -> list[str]:
+    """Split an explicit multi-part question without inventing new topics."""
+    normalized = " ".join(question.strip().split())
+    clauses = [part.strip(" ,;?.") for part in _CLAUSE_BOUNDARY.split(normalized)]
+    meaningful = [part for part in clauses if len(re.findall(r"[A-Za-z_]+", part)) >= 3]
+    if len(meaningful) <= 1:
+        return []
+    focused = list(meaningful)
+    for clause in meaningful:
+        match = re.search(
+            r"\b([A-Za-z_]+)\s+are\b.+?\bfor\s+(?:the\s+)?(?:current\s+)?([A-Za-z_]+)\b",
+            clause, re.IGNORECASE,
+        )
+        if match:
+            owner_object = f"{match.group(2)} {match.group(1)}"
+            if owner_object.lower() not in {item.lower() for item in focused}:
+                focused.append(owner_object)
+        current = re.search(r"\bcurrent\s+([A-Za-z_]+)\b", clause, re.IGNORECASE)
+        if current:
+            current_entity = f"current {current.group(1)}"
+            if current_entity.lower() not in {item.lower() for item in focused}:
+                focused.append(current_entity)
+    return focused[:MAX_REPOSITORY_SUBQUERIES]
 
 
 def is_identifier_shaped_symbol(value: str, source_text: str = "") -> bool:

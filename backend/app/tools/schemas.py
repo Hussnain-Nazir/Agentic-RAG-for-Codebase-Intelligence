@@ -51,6 +51,10 @@ class CodeReference(BaseModel):
     line: int
     relationship_kind: str
     confidence: str
+    target_file: str | None = None
+    target_symbol_id: uuid.UUID | None = None
+    target_start_line: int | None = None
+    target_end_line: int | None = None
 
 
 class CodeReferenceList(RootModel[list[CodeReference]]):
@@ -61,6 +65,8 @@ class RelatedFilesInput(BaseModel):
     repository_id: uuid.UUID
     symbol_name_or_chunk_id: str = Field(min_length=1)
     include_seed: bool = False
+    forward_only: bool = False
+    source_file_path: str | None = None
 
 
 class InspectRepositoryInput(BaseModel):
@@ -76,6 +82,13 @@ class ArchitectureSummary(BaseModel):
     frameworks_detected: list[str]
     likely_entrypoints: list[str]
     test_locations: list[str]
+    backend_boundary: str | None = None
+    frontend_boundary: str | None = None
+    database_layer: str | None = None
+    database_locations: list[str] = Field(default_factory=list)
+    api_organization: str | None = None
+    api_locations: list[str] = Field(default_factory=list)
+    auth_locations: list[str] = Field(default_factory=list)
 
 
 class RetrieveMemoryInput(BaseModel):

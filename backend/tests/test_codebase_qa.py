@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import pytest
+import httpx
 from fastapi import Depends
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
@@ -26,6 +27,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.evidence.models import Evidence
 from app.llm.mock import MockProvider
+from app.llm.openai_compatible import LLMProviderRequestError
 from app.llm.base import LLMResult
 from app.main import create_app
 from app.models import AgentRun, AgentRunStatus, CodeChunk, ModelExecution, Repository, RepositoryIndex, ToolCall, User
@@ -405,6 +407,45 @@ def test_repository_qa_provider_failure_returns_sanitized_502(qa_context) -> Non
     assert "provider.example.test" not in execution.error
 
 
+@pytest.mark.parametrize(
+    ("failure", "message", "trace_fragment"),
+    [
+        (httpx.ReadTimeout("synthetic-secret"), "The selected model request timed out", "timed out"),
+        (LLMProviderRequestError("synthetic-secret", 429), "The selected model provider returned an HTTP error", "HTTP 429"),
+    ],
+)
+def test_provider_timeout_and_http_failure_are_distinct_and_sanitized(
+    qa_context, failure: Exception, message: str, trace_fragment: str,
+) -> None:
+    client, factory, repository, provider_box, _ = qa_context
+
+    class FailingProvider:
+        model_name = "synthetic-provider"
+
+        async def complete(self, messages, schema, timeout_s):
+            del messages, schema, timeout_s
+            raise failure
+
+    provider_box["provider"] = FailingProvider()
+    response = client.post(
+        f"/repositories/{repository.id}/ask",
+        json={"question": "How does authentication work?", "model_slot": "A"},
+    )
+    assert response.status_code == 502
+    assert response.json()["detail"]["message"] == message
+    assert "synthetic-secret" not in response.text
+
+    async def trace_error():
+        async with factory() as session:
+            return await session.scalar(select(ModelExecution.error).where(
+                ModelExecution.agent_run_id == uuid.UUID(response.json()["detail"]["agent_run_id"])
+            ))
+
+    error = asyncio.run(trace_error())
+    assert trace_fragment in error
+    assert "synthetic-secret" not in error
+
+
 def test_repository_qa_failed_schema_repair_returns_422(qa_context) -> None:
     client, session_factory, repository, provider_box, _ = qa_context
 
@@ -434,7 +475,7 @@ def test_repository_qa_failed_schema_repair_returns_422(qa_context) -> None:
 
     assert response.status_code == 422
     detail = response.json()["detail"]
-    assert detail["message"] == "The model answer failed grounding validation"
+    assert detail["message"] == "The model output failed structured validation"
     assert "answer" not in detail
     assert provider.calls == 2
 

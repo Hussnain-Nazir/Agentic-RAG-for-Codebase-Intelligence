@@ -25,6 +25,15 @@ def test_demo_evaluation_clears_ground_truth_thresholds() -> None:
     assert {item["category"] for item in report["questions"]} == {
         "symbol", "qa", "architecture", "flow", "impact"
     }
+    by_id = {item["id"]: item for item in report["questions"]}
+    assert {"qa-ownership-complete", "flow-login", "impact-org", "architecture-overview"} <= by_id.keys()
+    assert by_id["qa-ownership-complete"]["expected_file_recall"] == 1.0
+    assert by_id["qa-ownership-complete"]["expected_symbol_recall"] == 1.0
+    assert by_id["flow-login"]["expected_step_recall"] >= 0.8
+    assert by_id["flow-login"]["incorrect_resolved_transitions"] == 0
+    assert by_id["impact-org"]["direct_recall"] == 1.0
+    assert by_id["impact-org"]["indirect_recall"] == 1.0
+    assert by_id["architecture-overview"]["architecture_locations_match"] is True
     assert metrics["retrieval_hit_at_12"] >= 0.8
     assert metrics["expected_file_recall"] >= 0.8
     assert metrics["expected_symbol_recall"] >= 0.8
@@ -33,6 +42,7 @@ def test_demo_evaluation_clears_ground_truth_thresholds() -> None:
     assert metrics["invalid_reference_rate"] == 0.0
     assert metrics["expected_step_recall"] >= 0.8
     assert metrics["step_order_correct"] == 1.0
+    assert metrics["architecture_locations_match"] == 1.0
     assert metrics["direct_recall"] >= 0.8
     assert metrics["direct_precision"] >= 0.8
     assert metrics["indirect_recall"] >= 0.7

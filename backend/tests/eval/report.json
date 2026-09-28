@@ -1,29 +1,30 @@
 {
   "fixture": "backend/tests/fixtures/demo_repo",
   "embedding_provider": "HashEmbeddingProvider",
-  "question_count": 25,
+  "question_count": 26,
   "index_state": "READY",
-  "indexing_ms": 243.09,
+  "indexing_ms": 270.98,
   "indexed_files": 29,
   "indexed_symbols": 73,
-  "indexed_relationships": 277,
+  "indexed_relationships": 281,
   "metrics": {
     "retrieval_hit_at_12": 1.0,
-    "retrieval_file_recall": 1.0,
-    "retrieval_symbol_recall": 1.0,
+    "retrieval_file_recall": 0.9744,
+    "retrieval_symbol_recall": 0.9487,
     "expected_file_recall": 1.0,
     "expected_symbol_recall": 1.0,
     "evidence_groundedness_rate": 1.0,
     "expected_step_recall": 0.9333,
     "step_order_correct": 1.0,
     "direct_recall": 1.0,
-    "direct_precision": 1.0,
+    "direct_precision": 0.9667,
     "indirect_recall": 1.0,
-    "indirect_precision": 0.9,
+    "indirect_precision": 1.0,
     "architecture_languages_match": 1.0,
     "architecture_frameworks_match": 1.0,
+    "architecture_locations_match": 1.0,
     "tool_count": 4.0,
-    "latency_ms": 256.3604,
+    "latency_ms": 298.1762,
     "citation_validity_rate": 1.0,
     "invalid_reference_rate": 0.0
   },
@@ -45,7 +46,7 @@
       "reference_invalid": 0,
       "invalid_reference_rate": 0.0,
       "tool_count": 1,
-      "latency_ms": 134.86,
+      "latency_ms": 171.86,
       "errors": [],
       "successful": true
     },
@@ -65,7 +66,7 @@
       "reference_invalid": 0,
       "invalid_reference_rate": 0.0,
       "tool_count": 1,
-      "latency_ms": 113.43,
+      "latency_ms": 139.78,
       "errors": [],
       "successful": true
     },
@@ -85,7 +86,7 @@
       "reference_invalid": 0,
       "invalid_reference_rate": 0.0,
       "tool_count": 1,
-      "latency_ms": 116.58,
+      "latency_ms": 137.67,
       "errors": [],
       "successful": true
     },
@@ -105,7 +106,7 @@
       "reference_invalid": 0,
       "invalid_reference_rate": 0.0,
       "tool_count": 1,
-      "latency_ms": 109.92,
+      "latency_ms": 125.85,
       "errors": [],
       "successful": true
     },
@@ -125,7 +126,7 @@
       "reference_invalid": 0,
       "invalid_reference_rate": 0.0,
       "tool_count": 1,
-      "latency_ms": 116.39,
+      "latency_ms": 135.77,
       "errors": [],
       "successful": true
     },
@@ -145,7 +146,7 @@
       "reference_invalid": 0,
       "invalid_reference_rate": 0.0,
       "tool_count": 1,
-      "latency_ms": 120.92,
+      "latency_ms": 126.58,
       "errors": [],
       "successful": true
     },
@@ -165,7 +166,7 @@
       "reference_invalid": 0,
       "invalid_reference_rate": null,
       "tool_count": 4,
-      "latency_ms": 286.01,
+      "latency_ms": 282.19,
       "errors": [],
       "successful": true
     },
@@ -185,7 +186,7 @@
       "reference_invalid": 0,
       "invalid_reference_rate": null,
       "tool_count": 4,
-      "latency_ms": 267.53,
+      "latency_ms": 283.37,
       "errors": [],
       "successful": true
     },
@@ -205,7 +206,7 @@
       "reference_invalid": 0,
       "invalid_reference_rate": null,
       "tool_count": 4,
-      "latency_ms": 281.34,
+      "latency_ms": 302.85,
       "errors": [],
       "successful": true
     },
@@ -225,7 +226,7 @@
       "reference_invalid": 0,
       "invalid_reference_rate": null,
       "tool_count": 4,
-      "latency_ms": 302.89,
+      "latency_ms": 318.06,
       "errors": [],
       "successful": true
     },
@@ -245,7 +246,7 @@
       "reference_invalid": 0,
       "invalid_reference_rate": null,
       "tool_count": 4,
-      "latency_ms": 267.05,
+      "latency_ms": 265.99,
       "errors": [],
       "successful": true
     },
@@ -265,7 +266,27 @@
       "reference_invalid": 0,
       "invalid_reference_rate": null,
       "tool_count": 4,
-      "latency_ms": 329.15,
+      "latency_ms": 292.51,
+      "errors": [],
+      "successful": true
+    },
+    {
+      "id": "qa-ownership-complete",
+      "category": "qa",
+      "retrieval_hit_at_12": true,
+      "retrieval_file_recall": 0.6666666666666666,
+      "retrieval_symbol_recall": 0.3333333333333333,
+      "expected_file_recall": 1.0,
+      "expected_symbol_recall": 1.0,
+      "citation_total": 12,
+      "citation_invalid": 0,
+      "citation_validity_rate": 1.0,
+      "evidence_groundedness_rate": 1.0,
+      "reference_total": 0,
+      "reference_invalid": 0,
+      "invalid_reference_rate": null,
+      "tool_count": 8,
+      "latency_ms": 796.31,
       "errors": [],
       "successful": true
     },
@@ -285,10 +306,11 @@
       "reference_invalid": 0,
       "invalid_reference_rate": null,
       "tool_count": 1,
-      "latency_ms": 56.09,
+      "latency_ms": 61.32,
       "errors": [],
       "architecture_languages_match": true,
       "architecture_frameworks_match": true,
+      "architecture_locations_match": true,
       "successful": true
     },
     {
@@ -307,7 +329,7 @@
       "reference_invalid": 0,
       "invalid_reference_rate": null,
       "tool_count": 1,
-      "latency_ms": 43.89,
+      "latency_ms": 46.29,
       "errors": [],
       "architecture_languages_match": true,
       "architecture_frameworks_match": true,
@@ -329,7 +351,7 @@
       "reference_invalid": 0,
       "invalid_reference_rate": null,
       "tool_count": 1,
-      "latency_ms": 49.43,
+      "latency_ms": 52.08,
       "errors": [],
       "architecture_languages_match": true,
       "architecture_frameworks_match": true,
@@ -343,42 +365,90 @@
       "retrieval_symbol_recall": null,
       "expected_file_recall": null,
       "expected_symbol_recall": null,
-      "citation_total": 4,
+      "citation_total": 6,
       "citation_invalid": 0,
       "citation_validity_rate": 1.0,
       "evidence_groundedness_rate": 1.0,
-      "reference_total": 4,
+      "reference_total": 14,
       "reference_invalid": 0,
       "invalid_reference_rate": 0.0,
-      "tool_count": 8,
-      "latency_ms": 332.87,
+      "tool_count": 7,
+      "latency_ms": 456.56,
       "errors": [],
       "expected_step_recall": 1.0,
       "step_order_correct": true,
       "incorrect_resolved_transitions": 0,
       "observed_steps": [
         {
+          "file": "frontend/src/LoginForm.tsx",
+          "symbol": "LoginForm",
+          "start_line": 1,
+          "end_line": 26,
+          "unresolved": false,
+          "relationship_to_next": "CALLS"
+        },
+        {
+          "file": "frontend/src/api.ts",
+          "symbol": "login",
+          "start_line": 4,
+          "end_line": 43,
+          "unresolved": false,
+          "relationship_to_next": "API_CALL"
+        },
+        {
           "file": "backend/demo_app/routes/auth.py",
           "symbol": "login",
-          "start_line": 16,
+          "start_line": 10,
           "end_line": 22,
           "unresolved": false,
           "relationship_to_next": "CALLS"
         },
         {
-          "file": "backend/demo_app/schemas.py",
-          "symbol": "TokenResponse",
-          "start_line": 2,
-          "end_line": 31,
+          "file": "backend/demo_app/services.py",
+          "symbol": "authenticate_user",
+          "start_line": 22,
+          "end_line": 36,
           "unresolved": false,
+          "relationship_to_next": "CALLS"
+        },
+        {
+          "file": "backend/demo_app/repositories.py",
+          "symbol": "get_user_by_email",
+          "start_line": 5,
+          "end_line": 40,
+          "unresolved": false,
+          "relationship_to_next": "CALLS"
+        },
+        {
+          "file": "backend/demo_app/repositories.py",
+          "symbol": "select",
+          "start_line": 5,
+          "end_line": 40,
+          "unresolved": true,
+          "relationship_to_next": null
+        },
+        {
+          "file": "backend/demo_app/security.py",
+          "symbol": "verify_password",
+          "start_line": 14,
+          "end_line": 25,
+          "unresolved": true,
           "relationship_to_next": null
         },
         {
           "file": "backend/demo_app/security.py",
           "symbol": "create_access_token",
           "start_line": 14,
-          "end_line": 41,
-          "unresolved": false,
+          "end_line": 25,
+          "unresolved": true,
+          "relationship_to_next": null
+        },
+        {
+          "file": "frontend/src/api.ts",
+          "symbol": "request",
+          "start_line": 4,
+          "end_line": 43,
+          "unresolved": true,
           "relationship_to_next": null
         }
       ],
@@ -392,15 +462,15 @@
       "retrieval_symbol_recall": null,
       "expected_file_recall": null,
       "expected_symbol_recall": null,
-      "citation_total": 12,
+      "citation_total": 4,
       "citation_invalid": 0,
       "citation_validity_rate": 1.0,
       "evidence_groundedness_rate": 1.0,
-      "reference_total": 4,
+      "reference_total": 11,
       "reference_invalid": 0,
       "invalid_reference_rate": 0.0,
-      "tool_count": 8,
-      "latency_ms": 315.48,
+      "tool_count": 6,
+      "latency_ms": 368.83,
       "errors": [],
       "expected_step_recall": 1.0,
       "step_order_correct": true,
@@ -415,19 +485,51 @@
           "relationship_to_next": "CALLS"
         },
         {
-          "file": "backend/demo_app/schemas.py",
-          "symbol": "TokenResponse",
-          "start_line": 2,
-          "end_line": 31,
-          "unresolved": false,
-          "relationship_to_next": null
-        },
-        {
           "file": "backend/demo_app/services.py",
           "symbol": "authenticate_user",
           "start_line": 1,
           "end_line": 55,
           "unresolved": false,
+          "relationship_to_next": "CALLS"
+        },
+        {
+          "file": "backend/demo_app/repositories.py",
+          "symbol": "get_user_by_email",
+          "start_line": 1,
+          "end_line": 40,
+          "unresolved": false,
+          "relationship_to_next": "CALLS"
+        },
+        {
+          "file": "backend/demo_app/repositories.py",
+          "symbol": "select",
+          "start_line": 1,
+          "end_line": 40,
+          "unresolved": true,
+          "relationship_to_next": null
+        },
+        {
+          "file": "backend/demo_app/security.py",
+          "symbol": "verify_password",
+          "start_line": 14,
+          "end_line": 25,
+          "unresolved": true,
+          "relationship_to_next": null
+        },
+        {
+          "file": "backend/demo_app/security.py",
+          "symbol": "create_access_token",
+          "start_line": 14,
+          "end_line": 25,
+          "unresolved": false,
+          "relationship_to_next": "CALLS"
+        },
+        {
+          "file": "backend/demo_app/security.py",
+          "symbol": "str",
+          "start_line": 14,
+          "end_line": 25,
+          "unresolved": true,
           "relationship_to_next": null
         }
       ],
@@ -441,15 +543,15 @@
       "retrieval_symbol_recall": null,
       "expected_file_recall": null,
       "expected_symbol_recall": null,
-      "citation_total": 7,
+      "citation_total": 4,
       "citation_invalid": 0,
       "citation_validity_rate": 1.0,
       "evidence_groundedness_rate": 1.0,
-      "reference_total": 6,
+      "reference_total": 8,
       "reference_invalid": 0,
       "invalid_reference_rate": 0.0,
-      "tool_count": 8,
-      "latency_ms": 388.37,
+      "tool_count": 6,
+      "latency_ms": 375.29,
       "errors": [],
       "expected_step_recall": 0.6666666666666666,
       "step_order_correct": true,
@@ -476,7 +578,7 @@
           "symbol": "get_user_by_id",
           "start_line": 1,
           "end_line": 40,
-          "unresolved": false,
+          "unresolved": true,
           "relationship_to_next": null
         },
         {
@@ -485,6 +587,14 @@
           "start_line": 1,
           "end_line": 55,
           "unresolved": false,
+          "relationship_to_next": "CALLS"
+        },
+        {
+          "file": "backend/demo_app/services.py",
+          "symbol": "select_items_for_user",
+          "start_line": 1,
+          "end_line": 55,
+          "unresolved": true,
           "relationship_to_next": null
         }
       ],
@@ -498,15 +608,15 @@
       "retrieval_symbol_recall": null,
       "expected_file_recall": null,
       "expected_symbol_recall": null,
-      "citation_total": 3,
+      "citation_total": 2,
       "citation_invalid": 0,
       "citation_validity_rate": 1.0,
       "evidence_groundedness_rate": 1.0,
       "reference_total": 6,
       "reference_invalid": 0,
       "invalid_reference_rate": 0.0,
-      "tool_count": 7,
-      "latency_ms": 395.79,
+      "tool_count": 6,
+      "latency_ms": 377.23,
       "errors": [],
       "expected_step_recall": 1.0,
       "step_order_correct": true,
@@ -529,10 +639,10 @@
           "relationship_to_next": "CALLS"
         },
         {
-          "file": "backend/demo_app/services.py",
+          "file": "backend/demo_app/repositories.py",
           "symbol": "get_item",
           "start_line": 1,
-          "end_line": 55,
+          "end_line": 40,
           "unresolved": true,
           "relationship_to_next": null
         },
@@ -563,7 +673,7 @@
       "reference_invalid": 0,
       "invalid_reference_rate": 0.0,
       "tool_count": 6,
-      "latency_ms": 370.14,
+      "latency_ms": 415.82,
       "errors": [],
       "expected_step_recall": 1.0,
       "step_order_correct": true,
@@ -586,11 +696,11 @@
           "relationship_to_next": "CALLS"
         },
         {
-          "file": "backend/demo_app/repositories.py",
+          "file": "backend/demo_app/models.py",
           "symbol": "Item",
-          "start_line": 1,
-          "end_line": 40,
-          "unresolved": true,
+          "start_line": 26,
+          "end_line": 34,
+          "unresolved": false,
           "relationship_to_next": null
         }
       ],
@@ -612,7 +722,7 @@
       "reference_invalid": 0,
       "invalid_reference_rate": 0.0,
       "tool_count": 6,
-      "latency_ms": 425.48,
+      "latency_ms": 389.48,
       "errors": [],
       "direct_recall": 1.0,
       "direct_precision": 1.0,
@@ -623,7 +733,7 @@
         ]
       ],
       "indirect_recall": 1.0,
-      "indirect_precision": 0.5,
+      "indirect_precision": 1.0,
       "observed_indirect": [
         [
           "backend/demo_app/routes/items.py",
@@ -652,7 +762,7 @@
       "retrieval_symbol_recall": null,
       "expected_file_recall": null,
       "expected_symbol_recall": null,
-      "citation_total": 2,
+      "citation_total": 1,
       "citation_invalid": 0,
       "citation_validity_rate": 1.0,
       "evidence_groundedness_rate": 1.0,
@@ -660,7 +770,7 @@
       "reference_invalid": 0,
       "invalid_reference_rate": 0.0,
       "tool_count": 6,
-      "latency_ms": 383.15,
+      "latency_ms": 417.69,
       "errors": [],
       "direct_recall": 1.0,
       "direct_precision": 1.0,
@@ -692,7 +802,7 @@
       "retrieval_symbol_recall": null,
       "expected_file_recall": null,
       "expected_symbol_recall": null,
-      "citation_total": 3,
+      "citation_total": 2,
       "citation_invalid": 0,
       "citation_validity_rate": 1.0,
       "evidence_groundedness_rate": 1.0,
@@ -700,7 +810,7 @@
       "reference_invalid": 0,
       "invalid_reference_rate": 0.0,
       "tool_count": 6,
-      "latency_ms": 410.1,
+      "latency_ms": 430.64,
       "errors": [],
       "direct_recall": 1.0,
       "direct_precision": 1.0,
@@ -732,11 +842,11 @@
       "citation_invalid": 0,
       "citation_validity_rate": 1.0,
       "evidence_groundedness_rate": 1.0,
-      "reference_total": 3,
+      "reference_total": 4,
       "reference_invalid": 0,
       "invalid_reference_rate": 0.0,
       "tool_count": 6,
-      "latency_ms": 421.47,
+      "latency_ms": 403.35,
       "errors": [],
       "direct_recall": 1.0,
       "direct_precision": 1.0,
@@ -754,6 +864,10 @@
       "indirect_precision": 1.0,
       "observed_indirect": [
         [
+          "backend/demo_app/repositories.py",
+          "insert_item"
+        ],
+        [
           "frontend/src/ItemList.tsx",
           "ItemList"
         ]
@@ -768,30 +882,70 @@
       "retrieval_symbol_recall": null,
       "expected_file_recall": null,
       "expected_symbol_recall": null,
-      "citation_total": 4,
+      "citation_total": 9,
       "citation_invalid": 0,
       "citation_validity_rate": 1.0,
       "evidence_groundedness_rate": 1.0,
-      "reference_total": 2,
+      "reference_total": 12,
       "reference_invalid": 0,
       "invalid_reference_rate": 0.0,
-      "tool_count": 6,
-      "latency_ms": 370.68,
+      "tool_count": 8,
+      "latency_ms": 579.21,
       "errors": [],
       "direct_recall": 1.0,
-      "direct_precision": 1.0,
+      "direct_precision": 0.8333333333333334,
       "observed_direct": [
         [
           "backend/demo_app/models.py",
+          "Organization.users"
+        ],
+        [
+          "backend/demo_app/models.py",
           "User"
+        ],
+        [
+          "backend/demo_app/models.py",
+          "User.organization"
+        ],
+        [
+          "backend/demo_app/models.py",
+          "User.organization_id"
+        ],
+        [
+          "backend/demo_app/schemas.py",
+          "RegisterRequest.organization_id"
+        ],
+        [
+          "backend/demo_app/services.py",
+          "register_user"
         ]
       ],
       "indirect_recall": 1.0,
       "indirect_precision": 1.0,
       "observed_indirect": [
         [
-          "backend/demo_app/services.py",
-          "register_user"
+          "backend/demo_app/routes/auth.py",
+          "register"
+        ],
+        [
+          "backend/demo_app/seed.py",
+          "main"
+        ],
+        [
+          "backend/tests/test_api.py",
+          "client"
+        ],
+        [
+          "backend/tests/test_api.py",
+          "register_and_login"
+        ],
+        [
+          "backend/tests/test_api.py",
+          "test_invalid_credentials_and_missing_organization"
+        ],
+        [
+          "frontend/src/api.ts",
+          "register"
         ]
       ],
       "successful": true

@@ -268,6 +268,14 @@ def _merged_chunk(group: list[RankedChunk]) -> RankedChunk:
     for item in group:
         merged_signals.update(item.contributing_signals)
         merged_symbols.update(item.contained_symbols)
+        if item.chunk.symbol_name:
+            merged_symbols.add(ContainedSymbol(
+                name=item.chunk.symbol_name,
+                file_path=item.chunk.file_path,
+                start_line=item.chunk.start_line,
+                end_line=item.chunk.end_line,
+                match_type="contained",
+            ))
         merged_relationships.update(item.relationship_metadata)
         for signal, score in item.raw_signal_scores.items():
             merged_raw_scores[signal] = max(

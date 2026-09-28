@@ -38,8 +38,14 @@ def validate_architecture_summary(text: str, summary: ArchitectureSummary) -> No
     """Reject named architecture facts absent from the inspected summary."""
     if not text.strip() or len(text) > 800:
         raise SchemaValidationError("Architecture summary must be concise and nonempty")
-    allowed_paths = set(summary.likely_entrypoints) | set(summary.test_locations)
+    allowed_paths = (
+        set(summary.likely_entrypoints) | set(summary.test_locations)
+        | set(summary.database_locations) | set(summary.api_locations)
+        | set(summary.auth_locations)
+    )
     allowed_folders = set(summary.top_level_folders)
+    if summary.api_organization:
+        allowed_folders.add(summary.api_organization)
     allowed_names = allowed_paths | allowed_folders
     allowed_frameworks = {name.lower() for name in summary.frameworks_detected}
     allowed_languages = {name.lower() for name in summary.languages}

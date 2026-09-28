@@ -3,8 +3,8 @@
 Run `python tests/eval/run_evaluation.py` from `backend/` to index the complete
 `tests/fixtures/demo_repo` source and write [report.json](report.json). Run
 `pytest -p no:cacheprovider tests/eval/test_evaluation_thresholds.py` for the
-acceptance gate. The recorded [questions.json](questions.json) contains 25
-questions: 6 symbol lookups, 6 Q&A, 3 architecture, 5 flow traces, and 5
+acceptance gate. The recorded [questions.json](questions.json) contains 26
+questions: 6 symbol lookups, 7 Q&A, 3 architecture, 5 flow traces, and 5
 change-impact analyses.
 
 The script uses Prism's actual upload-source ingestion, Tree-sitter parsing,
@@ -30,9 +30,11 @@ transition absent from observed graph fails the gate even if aggregate rates
 remain high. Unresolved flow links are permitted and reduce step recall when
 an expected definition is not reached.
 
-Current measured summary: 25 questions, Hit@12 100%, expected file/symbol
-recall 100%, citation validity 100%, grounded responses 100%, invalid
-references 0%, ordered flow-step recall 93.33%, direct-impact recall and
-precision 100%, indirect-impact recall 100% and precision 90%. Core coverage
-is 92.52% on the complete backend suite; see [COVERAGE.md](COVERAGE.md) for the
-command and full report.
+Current measured summary: 26 questions, Hit@12 100%, response expected
+file/symbol recall 100%, citation validity 100%, grounded responses 100%,
+invalid references 0%, ordered flow-step recall 93.33%, direct-impact recall
+100% and precision 96.67%, indirect-impact recall and precision 100%, and
+nested architecture location checks 100%. The benchmark now covers the full
+login question, multi-part ownership Q&A, and multiple-organization impact.
+The historical core coverage measurement from 2026-09-26 is in
+[COVERAGE.md](COVERAGE.md); it has not been recalculated for these edits.

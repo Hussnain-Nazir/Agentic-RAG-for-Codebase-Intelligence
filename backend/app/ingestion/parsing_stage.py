@@ -1,3 +1,5 @@
+import posixpath
+import re
 from pathlib import PurePosixPath
 
 from sqlalchemy import delete
@@ -95,6 +97,29 @@ async def parse_repository_files(files: list[RepositoryFile]) -> list[ParsedFile
             symbols_by_name.setdefault(symbol.name, []).append(row)
     await session.flush()
 
+    file_paths = {file.id: file.path for file, _ in parsed_files}
+    route_targets: dict[tuple[str, str], list[CodeSymbol]] = {}
+    for file, parsed in parsed_files:
+        if not parsed.parse_ok or parsed.language != "python":
+            continue
+        prefix_match = re.search(
+            r"APIRouter\s*\(\s*prefix\s*=\s*['\"]([^'\"]+)['\"]",
+            file.content or "",
+        )
+        prefix = prefix_match.group(1).rstrip("/") if prefix_match else ""
+        for symbol in parsed.symbols:
+            target = symbol_rows.get((file.id, symbol.name))
+            if target is None:
+                continue
+            for decorator in symbol.metadata.get("api_routes", []):
+                match = re.search(
+                    r"\.(get|post|put|patch|delete)\s*\(\s*['\"]([^'\"]+)['\"]",
+                    decorator, re.IGNORECASE,
+                )
+                if match:
+                    path = prefix + "/" + match.group(2).lstrip("/")
+                    route_targets.setdefault((match.group(1).upper(), path), []).append(target)
+
     for file, parsed in parsed_files:
         if not parsed.parse_ok:
             continue
@@ -102,10 +127,44 @@ async def parse_repository_files(files: list[RepositoryFile]) -> list[ParsedFile
             source = symbol_rows.get((file.id, extracted.from_symbol))
             if source is None:
                 continue
+            if extracted.kind.value == "API_CALL":
+                resolved: set[object] = set()
+                owner = next((item for item in parsed.symbols if item.name == extracted.from_symbol), None)
+                for call in owner.metadata.get("api_call_details", []) if owner else []:
+                    targets = route_targets.get((call["method"], call["path"]), [])
+                    if len(targets) == 1 and targets[0].id not in resolved:
+                        resolved.add(targets[0].id)
+                        session.add(CodeRelationship(
+                            repository_index_id=repository_index_id,
+                            from_symbol_id=source.id, to_symbol_id=targets[0].id,
+                            kind=extracted.kind, confidence=extracted.confidence,
+                        ))
+                if resolved:
+                    continue
             target = symbol_rows.get((file.id, extracted.to_symbol))
             if target is None and extracted.to_symbol:
                 candidates = symbols_by_name.get(extracted.to_symbol, [])
-                target = candidates[0] if len(candidates) == 1 else None
+                if len(candidates) == 1:
+                    target = candidates[0]
+                elif len(candidates) > 1:
+                    modules = [
+                        item.module for item in parsed.imports
+                        if extracted.to_symbol in item.names
+                    ]
+                    matches = []
+                    for module in modules:
+                        if module.startswith("."):
+                            base = posixpath.normpath(posixpath.join(posixpath.dirname(file.path), module))
+                            expected = {base + suffix for suffix in (".js", ".jsx", ".ts", ".tsx")}
+                        else:
+                            base = module.replace(".", "/")
+                            expected = {base + ".py"}
+                        matches.extend(
+                            candidate for candidate in candidates
+                            if file_paths.get(candidate.file_id) in expected
+                            or any(file_paths.get(candidate.file_id, "").endswith("/" + path) for path in expected)
+                        )
+                    target = matches[0] if len({item.id for item in matches}) == 1 else None
             session.add(
                 CodeRelationship(
                     repository_index_id=repository_index_id,

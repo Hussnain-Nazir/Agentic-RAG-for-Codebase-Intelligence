@@ -317,7 +317,7 @@ def test_adjacent_evidence_unit_receives_exact_boost_once() -> None:
     assert len(merged) == 1
     assert merged[0].raw_score == pytest.approx(0.7)
     assert [item.name for item in merged[0].contained_symbols] == [
-        "create_access_token"
+        "create_access_token", "verify_password"
     ]
 
 

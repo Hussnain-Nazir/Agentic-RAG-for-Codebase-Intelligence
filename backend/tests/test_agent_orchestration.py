@@ -146,6 +146,34 @@ class DynamicMockProvider:
         )
 
 
+@pytest.mark.asyncio
+async def test_normal_requests_use_each_selected_slot_timeout_without_fallback(orchestration_context) -> None:
+    session, user, repository, _, conversation, registry_factory = orchestration_context
+
+    class TimedProvider(DynamicMockProvider):
+        def __init__(self, timeout_s: int) -> None:
+            super().__init__()
+            self.timeout_s = timeout_s
+            self.seen: list[int] = []
+
+        async def complete(self, messages, schema, timeout_s):
+            self.seen.append(timeout_s)
+            return await super().complete(messages, schema, timeout_s)
+
+    model_a, model_b = TimedProvider(17), TimedProvider(43)
+    controller = AgentController(
+        session, {"A": model_a, "B": model_b},
+        tool_registry=registry_factory(), user_id=user.id,
+    )
+    for slot in ("A", "B"):
+        result = await controller.run(
+            "How does authentication work?", slot, repository.id, conversation.id,
+        )
+        assert result.status is AgentRunStatus.OK
+    assert model_a.seen == [17]
+    assert model_b.seen == [43]
+
+
 class FailingModelProvider:
     model_name = "failing-model"
 

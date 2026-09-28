@@ -14,6 +14,7 @@ import argparse
 import hashlib
 import json
 import math
+import re
 import sys
 import time
 import uuid
@@ -27,7 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from app.agent.classification import TaskType, extract_explicit_symbols
+from app.agent.classification import TaskType, extract_explicit_symbols, repository_subqueries
 from app.agent.controller import AgentController
 from app.api.routes.repositories import _persist_repository
 from app.config import Settings
@@ -99,6 +100,13 @@ class GroundedMock:
             )), code_evidence[0] if code_evidence else None)
             if code is None:
                 self.raw_response = {"answer": "Insufficient repository evidence.", "evidence": [], "confidence": "low", "limitations": "No code evidence."}
+            elif repository_subqueries(context["task"]["query"]):
+                self.raw_response = {
+                    "answer": " || ".join(item["content_excerpt"].strip()[:120] for item in code_evidence),
+                    "evidence": code_evidence,
+                    "confidence": "medium",
+                    "limitations": None,
+                }
             else:
                 excerpt = code["content_excerpt"].strip()[:180]
                 self.raw_response = {"answer": excerpt, "evidence": [code], "confidence": "medium", "limitations": None}
@@ -215,8 +223,23 @@ def _reference_counts(
     if isinstance(response, ChangeImpactResponse):
         for item in [*response.directly_affected, *response.likely_indirectly_affected]:
             total += 1
-            invalid += (item.file, item.symbol) not in symbols
+            invalid += not _observed_impact_symbol(item, response, symbols)
     return total, invalid
+
+
+def _observed_impact_symbol(item: Any, response: ChangeImpactResponse, symbols: set[tuple[str, str]]) -> bool:
+    if (item.file, item.symbol) in symbols:
+        return True
+    if "." not in item.symbol:
+        return False
+    owner, field_name = item.symbol.rsplit(".", 1)
+    return any(
+        evidence.evidence_id in item.evidence_ids
+        and evidence.file_path == item.file
+        and re.search(rf"\bclass\s+{re.escape(owner)}\b", evidence.content_excerpt)
+        and re.search(rf"(?m)^\s+{re.escape(field_name)}\s*(?::|=)", evidence.content_excerpt)
+        for evidence in response.evidence
+    )
 
 
 def audit_claims(
@@ -235,7 +258,11 @@ def audit_claims(
         checked = validate_citations(response, context)
         if checked.removed_citations:
             errors.append("invalid citation")
-        if not response.evidence or not any(response.answer.strip() in item.content_excerpt for item in response.evidence):
+        segments = response.answer.split(" || ")
+        if not response.evidence or not all(
+            any(segment.strip() in item.content_excerpt for item in response.evidence)
+            for segment in segments
+        ):
             errors.append("unsupported answer claim")
         if context.quality.value == "NONE" and response.confidence != "low":
             errors.append("confident answer without evidence")
@@ -279,7 +306,7 @@ def audit_claims(
             observed = {(item["file"], item["symbol"]): item for item in graph[key]}
             for item in values:
                 candidate = observed.get((item.file, item.symbol))
-                if (item.file, item.symbol) not in symbols or candidate is None or item.reason != candidate["reason"]:
+                if not _observed_impact_symbol(item, response, symbols) or candidate is None or item.reason != candidate["reason"]:
                     errors.append("unsupported impact claim")
                 if not item.evidence_ids:
                     errors.append("impact item without evidence")
@@ -410,6 +437,8 @@ async def evaluate(*, embedding_provider: Any | None = None, embedding_model_nam
                     record.update(expected_step_recall=recall, step_order_correct=ordered, incorrect_resolved_transitions=sum("resolved transition" in value for value in errors), observed_steps=[{"file": item.file, "symbol": item.symbol, "start_line": item.start_line, "end_line": item.end_line, "unresolved": item.unresolved, "relationship_to_next": item.relationship_to_next} for item in response.steps])
                     if not ordered:
                         errors.append("expected flow steps out of order")
+                    if question.get("expected_unresolved") and not any(item.unresolved for item in response.steps):
+                        errors.append("unproven flow boundary was not marked unresolved")
                 if isinstance(response, ChangeImpactResponse):
                     for key, label in (("directly_affected", "direct"), ("likely_indirectly_affected", "indirect")):
                         expected = _pairs(question["expected_direct" if label == "direct" else "expected_indirect"])
@@ -428,6 +457,14 @@ async def evaluate(*, embedding_provider: Any | None = None, embedding_model_nam
                     record["architecture_frameworks_match"] = set(question["expected_frameworks"]).issubset(response.frameworks_detected)
                     if not record["architecture_languages_match"] or not record["architecture_frameworks_match"]:
                         errors.append("architecture metadata missed recorded ground truth")
+                    if "expected_database_layer" in question:
+                        record["architecture_locations_match"] = (
+                            response.database_layer == question["expected_database_layer"]
+                            and response.api_organization == question["expected_api_organization"]
+                            and set(question["expected_auth_locations"]).issubset(response.auth_locations)
+                        )
+                        if not record["architecture_locations_match"]:
+                            errors.append("nested architecture locations missed recorded ground truth")
                 record["successful"] = not errors and (
                     ((not expected_files or expected_files <= response_files) and (not expected_symbols or expected_symbols <= response_symbols))
                     if question["category"] in ("symbol", "qa") else True
@@ -448,6 +485,7 @@ async def evaluate(*, embedding_provider: Any | None = None, embedding_model_nam
                     "evidence_groundedness_rate", "expected_step_recall",
                     "step_order_correct", "direct_recall", "direct_precision", "indirect_recall",
                     "indirect_precision", "architecture_languages_match", "architecture_frameworks_match",
+                    "architecture_locations_match",
                     "tool_count", "latency_ms",
                 )},
                 "unsuccessful_questions": [item["id"] for item in records if not item["successful"]],

@@ -190,6 +190,17 @@ def _candidate_symbols(evidence: list[Evidence]) -> dict[str, dict[str, object]]
 
 def select_entry_symbol(task: str, evidence: list[Evidence]) -> str | None:
     candidates = _candidate_symbols(evidence)
+    start = re.search(r"\bfrom\b(.+?)\bto\b", task, re.IGNORECASE)
+    if start and re.search(r"\b(frontend|react|form|browser|client)\b", start.group(1), re.IGNORECASE):
+        starting_terms = _question_terms(start.group(1))
+        frontend = [
+            (len(_identifier_terms(name) & starting_terms), name)
+            for name, metadata in candidates.items()
+            if str(metadata.get("file") or "").startswith("frontend/")
+        ]
+        frontend.sort(key=lambda item: (-item[0], item[1]))
+        if frontend and frontend[0][0] > 0:
+            return frontend[0][1]
     explicit = extract_explicit_symbols(task)
     for candidate in explicit:
         exact = next(
@@ -335,6 +346,59 @@ async def investigate_flow_trace(
     entry_node = _node_from_definition(definition.name, definition, state.evidence)
     state.add_node(entry_node)
     queue = [entry_node.node_id]
+    if entry_node.file_path and entry_node.file_path.startswith("frontend/"):
+        source_evidence = _matching_evidence(
+            state.evidence, file_path=entry_node.file_path, symbol=entry_node.symbol,
+        )
+        direct_calls = {
+            str(call)
+            for item in source_evidence
+            for call in item.relationship_metadata.get("direct_calls", [])
+        }
+        for called in sorted(direct_calls):
+            if called == entry_node.symbol:
+                continue
+            references = await cached_execute(
+                "find_references",
+                FindReferencesInput(repository_id=repository_id, symbol_name=called),
+            )
+            if references is None:
+                break
+            matches = [
+                item for item in getattr(references, "root", [])
+                if item.file == entry_node.file_path
+                and item.symbol == entry_node.symbol
+                and item.target_file and item.target_file.startswith("frontend/")
+                and item.target_symbol_id is not None
+                and item.relationship_kind == "CALLS"
+            ]
+            if len({item.target_symbol_id for item in matches}) != 1:
+                continue
+            reference = matches[0]
+            target_evidence = _matching_evidence(
+                state.evidence, file_path=reference.target_file, symbol=called,
+            )
+            if not target_evidence:
+                continue
+            target_node = FlowNode(
+                node_id=str(reference.target_symbol_id), symbol=called,
+                symbol_id=reference.target_symbol_id,
+                file_path=reference.target_file,
+                start_line=target_evidence[0].start_line,
+                end_line=target_evidence[0].end_line,
+                evidence_ids=[item.evidence_id for item in target_evidence],
+                definition_line=reference.target_start_line,
+            )
+            state.add_node(target_node)
+            state.add_edge(FlowEdge(
+                source_id=entry_node.node_id, target_id=target_node.node_id,
+                source_symbol=entry_node.symbol, target_symbol=called,
+                kind="CALLS", evidence_ids=entry_node.evidence_ids,
+                observed_by="find_references", confidence=reference.confidence,
+            ))
+            state.visited_nodes.add(entry_node.node_id)
+            queue = [target_node.node_id]
+            break
 
     while queue:
         current_id = queue.pop(0)
@@ -343,39 +407,20 @@ async def investigate_flow_trace(
         current = state.nodes[current_id]
         if current.unresolved:
             continue
-        references = await cached_execute(
-            "find_references",
-            FindReferencesInput(repository_id=repository_id, symbol_name=current.symbol),
-        )
-        if references is None:
-            state.partial_reason = "The tool bound stopped further reference inspection."
-            break
         state.visited_nodes.add(current_id)
-        state.reference_observations[current_id] = [
-            {
-                "file": item.file,
-                "symbol": item.symbol,
-                "kind": item.relationship_kind,
-            }
-            for item in getattr(references, "root", [])
-        ]
-
-        pending = sum(
-            node_id not in state.visited_nodes and not state.nodes[node_id].unresolved
-            for node_id in queue
-        )
-        if available_tool_calls - calls_used <= pending:
-            continue
         related = await cached_execute(
             "get_related_files",
             RelatedFilesInput(
                 repository_id=repository_id,
                 symbol_name_or_chunk_id=current.symbol,
                 include_seed=True,
+                forward_only=True,
+                source_file_path=current.file_path,
             ),
         )
         if related is None:
-            continue
+            state.partial_reason = "The tool bound stopped further forward inspection."
+            break
         related_evidence = list(getattr(related, "root", []))
         state.add_evidence(related_evidence)
         refreshed = _matching_evidence(
@@ -410,8 +455,10 @@ async def investigate_flow_trace(
         source_evidence = _matching_evidence(
             state.evidence, file_path=current.file_path, symbol=current.symbol
         )
+        discovered: list[str] = []
         for target_id, edge in sorted(
             outgoing.items(), key=lambda item: (
+                str(item[1].get("target_symbol", ""))[:1].isupper(),
                 str(item[1].get("target_symbol")), str(item[1].get("target_file")), item[0]
             )
         ):
@@ -447,7 +494,8 @@ async def investigate_flow_trace(
                 )
             )
             if target_id not in state.visited_nodes and target_id not in queue:
-                queue.append(target_id)
+                discovered.append(target_id)
+        queue = discovered + queue
 
         known_targets = {str(edge["target_symbol"]) for edge in outgoing.values()}
         call_sources = [
@@ -535,6 +583,10 @@ async def investigate_flow_trace(
                 )
             )
 
+    if state.partial_reason:
+        for node_id, node in state.nodes.items():
+            if node_id not in state.visited_nodes:
+                node.unresolved = True
     return state
 
 
@@ -585,7 +637,7 @@ def deterministic_flow_trace(
         evidence_ids = [item.evidence_id for item in compatible]
         next_id = visible_ids[index + 1] if index + 1 < len(visible_ids) else None
         edge = state.edge_between(node_id, next_id) if next_id else None
-        unresolved = node.unresolved
+        unresolved = node.unresolved or (next_id is not None and edge is None)
         steps.append(
             FlowStep(
                 order=len(steps) + 1,
@@ -653,7 +705,7 @@ def enforce_observed_transitions(
             step["relationship_to_next"] = None
             step["unresolved"] = node.unresolved
         elif edge is None:
-            step["unresolved"] = node.unresolved
+            step["unresolved"] = True
             step["relationship_to_next"] = None
         else:
             step["unresolved"] = node.unresolved

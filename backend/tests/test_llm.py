@@ -236,6 +236,8 @@ def test_model_factories_use_independent_slot_configuration() -> None:
     assert model_b.model_name == "slot-b-model"
     assert model_a._base_url == "https://slot-a.test.invalid/v1"
     assert model_b._base_url == "https://slot-b.test.invalid/v1"
+    assert model_a.timeout_s == 21
+    assert model_b.timeout_s == 34
 
 
 @pytest.fixture

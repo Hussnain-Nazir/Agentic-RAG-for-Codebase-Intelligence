@@ -216,10 +216,15 @@ class FindReferencesTool:
             for item in await self._session.scalars(
                 select(RepositoryFile).where(
                     RepositoryFile.repository_index_id == index.id,
-                    RepositoryFile.id.in_({item.file_id for item in sources.values()}),
+                    RepositoryFile.id.in_(
+                        {item.file_id for item in sources.values()}
+                        | {item.file_id for item in targets}
+                    ),
                 )
             )
         }
+        target_files = {item.id: item.path for item in files.values()}
+        targets_by_id = {target.id: target for target in targets}
         references: list[CodeReference] = []
         for relationship in relationships:
             source = sources.get(relationship.from_symbol_id)
@@ -228,6 +233,7 @@ class FindReferencesTool:
             file = files.get(source.file_id)
             if file is None:
                 continue
+            target = targets_by_id.get(relationship.to_symbol_id)
             references.append(
                 CodeReference(
                     file=file.path,
@@ -235,6 +241,10 @@ class FindReferencesTool:
                     line=source.start_line,
                     relationship_kind=relationship.kind.value,
                     confidence=relationship.confidence.value,
+                    target_file=target_files.get(target.file_id) if target else None,
+                    target_symbol_id=target.id if target else None,
+                    target_start_line=target.start_line if target else None,
+                    target_end_line=target.end_line if target else None,
                 )
             )
         return CodeReferenceList(references)
@@ -252,6 +262,8 @@ class GetRelatedFilesTool:
 
     async def execute(self, input: BaseModel, ctx: ExecutionContext) -> BaseModel:
         request = RelatedFilesInput.model_validate(input)
+        if request.forward_only and not request.source_file_path:
+            raise ToolValidationError("Forward expansion requires a source file path")
         await authorize_repository(self._session, request.repository_id, ctx)
         index = await current_repository_index(self._session, request.repository_id)
         seeds: list[RankedChunk] = []
@@ -276,10 +288,88 @@ class GetRelatedFilesTool:
                 request.symbol_name_or_chunk_id,
                 session=self._session,
             )
+            exact = [
+                item for item in seeds
+                if any(
+                    contained.name.lower() == request.symbol_name_or_chunk_id.lower()
+                    and contained.match_type in {"exact_case_sensitive", "exact_case_insensitive"}
+                    for contained in item.contained_symbols
+                )
+            ]
+            if exact:
+                seeds = exact
         if not seeds:
             return EvidenceList([])
+        if request.source_file_path:
+            seeds = [item for item in seeds if item.chunk.file_path == request.source_file_path]
+            if not seeds:
+                return EvidenceList([])
         seed_ids = {item.chunk.id for item in seeds}
-        expanded = await expand_structurally(seeds, session=self._session)
+        forward_targets: set[uuid.UUID] = set()
+        if request.forward_only and chunk_id is None:
+            file_by_id = {
+                item.id: item.path for item in await self._session.scalars(
+                    select(RepositoryFile).where(RepositoryFile.repository_index_id == index.id)
+                )
+            }
+            symbols = list(await self._session.scalars(
+                select(CodeSymbol).where(
+                    CodeSymbol.repository_index_id == index.id,
+                    func.lower(CodeSymbol.name) == request.symbol_name_or_chunk_id.lower(),
+                )
+            ))
+            symbols = [item for item in symbols if file_by_id.get(item.file_id) == request.source_file_path]
+            relationships = list(await self._session.scalars(
+                select(CodeRelationship).where(
+                    CodeRelationship.repository_index_id == index.id,
+                    CodeRelationship.from_symbol_id.in_([item.id for item in symbols]),
+                    CodeRelationship.kind.in_([CodeRelationshipKind.CALLS, CodeRelationshipKind.API_CALL]),
+                    CodeRelationship.to_symbol_id.is_not(None),
+                )
+            )) if symbols else []
+            targets = {
+                item.id: item for item in await self._session.scalars(
+                    select(CodeSymbol).where(
+                        CodeSymbol.repository_index_id == index.id,
+                        CodeSymbol.id.in_([edge.to_symbol_id for edge in relationships]),
+                    )
+                )
+            } if relationships else {}
+            ordered = sorted(relationships, key=lambda edge: (
+                targets[edge.to_symbol_id].symbol_type in {"CLASS", "INTERFACE", "TYPE"},
+                file_by_id.get(targets[edge.to_symbol_id].file_id) == request.source_file_path,
+                file_by_id.get(targets[edge.to_symbol_id].file_id) or "",
+                targets[edge.to_symbol_id].name,
+                targets[edge.to_symbol_id].start_line,
+                str(targets[edge.to_symbol_id].id),
+            ))
+            forward: list[RankedChunk] = []
+            for edge in ordered:
+                target = targets[edge.to_symbol_id]
+                if target.id in forward_targets:
+                    continue
+                chunk = await self._session.scalar(
+                    select(CodeChunk).where(
+                        CodeChunk.repository_id == request.repository_id,
+                        CodeChunk.repository_index_id == index.id,
+                        CodeChunk.file_id == target.file_id,
+                        CodeChunk.start_line <= target.start_line,
+                        CodeChunk.end_line >= target.end_line,
+                    ).order_by(
+                        (CodeChunk.symbol_name == target.name).desc(),
+                        CodeChunk.start_line,
+                    ).limit(1)
+                )
+                if chunk is None:
+                    continue
+                forward_targets.add(target.id)
+                if chunk.id not in seed_ids and chunk.id not in {item.chunk.id for item in forward}:
+                    forward.append(RankedChunk(chunk=chunk, raw_score=1.0, signal="structural"))
+                if len(forward_targets) >= 2:
+                    break
+            expanded = [*seeds, *forward]
+        else:
+            expanded = await expand_structurally(seeds, session=self._session)
         related = [
             item for item in expanded
             if request.include_seed or item.chunk.id not in seed_ids
@@ -295,6 +385,14 @@ class GetRelatedFilesTool:
                     )
                 )
             )
+            if request.source_file_path:
+                source_file_ids = set(await self._session.scalars(
+                    select(RepositoryFile.id).where(
+                        RepositoryFile.repository_index_id == index.id,
+                        RepositoryFile.path == request.source_file_path,
+                    )
+                ))
+                source_symbols = [item for item in source_symbols if item.file_id in source_file_ids]
             if source_symbols:
                 relationships = list(
                     await self._session.scalars(
@@ -342,6 +440,8 @@ class GetRelatedFilesTool:
                     )
                     source = symbols_by_id.get(relationship.from_symbol_id)
                     if source is None or target is None:
+                        continue
+                    if request.forward_only and target.id not in forward_targets:
                         continue
                     key = (source.id, target.id, relationship.kind.value)
                     if key in seen_edges:
@@ -455,6 +555,30 @@ class InspectRepositoryTool:
             or ".spec." in PurePosixPath(path).name
             or "tests" in PurePosixPath(path).parts
         )
+        python_paths = [
+            path for path, language, file_status in files
+            if language == "python" and file_status is RepositoryFileStatus.OK
+        ]
+        database_locations = sorted(
+            path for path in python_paths
+            if PurePosixPath(path).name.lower() in {
+                "db.py", "database.py", "session.py", "models.py", "repositories.py"
+            } or "db" in PurePosixPath(path).parts
+        )
+        database_layer = next(
+            (path for path in database_locations
+             if PurePosixPath(path).name.lower() in {"db.py", "database.py", "session.py"}),
+            database_locations[0] if database_locations else None,
+        )
+        api_locations = sorted(
+            path for path in python_paths
+            if any(part in {"routes", "routers", "api"} for part in PurePosixPath(path).parts[:-1])
+        )
+        api_folders = sorted({str(PurePosixPath(path).parent) for path in api_locations})
+        auth_locations = sorted(
+            path for path in python_paths
+            if any(term in PurePosixPath(path).stem.lower() for term in ("auth", "security"))
+        )
         return ArchitectureSummary(
             repository_id=request.repository_id,
             repository_index_id=index.id,
@@ -464,6 +588,13 @@ class InspectRepositoryTool:
             frameworks_detected=frameworks,
             likely_entrypoints=entrypoints,
             test_locations=tests,
+            backend_boundary="backend" if "backend" in folders else None,
+            frontend_boundary="frontend" if "frontend" in folders else None,
+            database_layer=database_layer,
+            database_locations=database_locations,
+            api_organization=api_folders[0] if api_folders else None,
+            api_locations=api_locations,
+            auth_locations=auth_locations,
         )
 
 

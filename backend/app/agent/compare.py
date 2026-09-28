@@ -68,7 +68,7 @@ async def _run_slot(
     counters: _Counters,
     controller: AgentController,
     session: AsyncSession,
-    timeout_s: int,
+    timeout_s: int | None,
 ) -> ModelResult:
     if provider is None:
         error = f"Model {slot} is not configured"
@@ -84,7 +84,8 @@ async def _run_slot(
     started = time.perf_counter()
     try:
         model_result = await provider.complete(
-            messages, schema=RepositoryAnswer, timeout_s=timeout_s
+            messages, schema=RepositoryAnswer,
+            timeout_s=timeout_s or getattr(provider, "timeout_s", 60),
         )
     except Exception as exc:
         error = _safe_error(exc)
@@ -143,7 +144,7 @@ async def compare_models(
     user_id: uuid.UUID,
     providers: dict[Literal["A", "B"], LLMProvider],
     tool_registry: ToolRegistry,
-    timeout_s: int = 60,
+    timeout_s: int | None = None,
 ) -> ModelComparisonResponse:
     conversation = await session.get(Session, session_id)
     if (

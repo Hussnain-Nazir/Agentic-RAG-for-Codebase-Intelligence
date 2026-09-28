@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Callable, Literal
 
 from pydantic import BaseModel
+import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.classification import (
@@ -18,6 +19,7 @@ from app.agent.classification import (
     extract_file_path,
     extract_reference_symbol,
     extract_symbol,
+    repository_subqueries,
 )
 from app.agent.architecture import ArchitectureNarration, validate_architecture_summary
 from app.agent.investigations.flow_trace import (
@@ -32,9 +34,10 @@ from app.agent.investigations.change_impact import (
     investigate_change_impact,
 )
 from app.agent.repair import attempt_repair
-from app.evidence.context_builder import ContextBuilder
+from app.evidence.context_builder import ContextBuilder, MAX_EVIDENCE_ITEMS
 from app.evidence.models import Evidence, EvidenceContext, EvidenceQuality, WebEvidenceItem
 from app.llm.base import LLMProvider, LLMResult, Message
+from app.llm.openai_compatible import LLMProviderRequestError
 from app.memory.service import MemoryService, maybe_write_automatic_repository_memory
 from app.models.agent_run import AgentRun, AgentRunStatus
 from app.models.session import Session
@@ -103,10 +106,59 @@ class _BoundsExceeded(RuntimeError):
 _FALLBACK_TO_REPOSITORY_QA = object()
 
 
+def _select_clause_evidence(groups: list[list[Evidence]]) -> list[Evidence]:
+    """Share the fixed evidence budget across supported query clauses."""
+    interleaved = [
+        group[position]
+        for position in range(max((len(group) for group in groups), default=0))
+        for group in groups
+        if position < len(group)
+    ]
+    interleaved.sort(
+        key=lambda item: bool(item.retrieval_metadata.get("is_structural_expansion"))
+    )
+    selected: list[Evidence] = []
+    seen_ids: set[uuid.UUID] = set()
+    for distinct_files_only in (True, False):
+        for item in interleaved:
+            if item.evidence_id in seen_ids:
+                continue
+            if distinct_files_only and any(
+                prior.file_path == item.file_path for prior in selected
+            ):
+                continue
+            if any(
+                prior.file_path == item.file_path
+                and prior.start_line is not None
+                and prior.end_line is not None
+                and item.start_line is not None
+                and item.end_line is not None
+                and max(0, min(prior.end_line, item.end_line) - max(prior.start_line, item.start_line) + 1)
+                > min(prior.end_line - prior.start_line + 1, item.end_line - item.start_line + 1) / 2
+                for prior in selected
+            ):
+                continue
+            selected.append(item)
+            seen_ids.add(item.evidence_id)
+            if len(selected) >= MAX_EVIDENCE_ITEMS:
+                return selected
+    return selected
+
+
 class AgentProviderError(RuntimeError):
-    def __init__(self, run_id: uuid.UUID) -> None:
+    def __init__(self, run_id: uuid.UUID, category: str = "request") -> None:
+        self.category = category
         super().__init__("Selected model request failed")
         self.run_id = run_id
+
+
+def _provider_failure(exc: Exception) -> tuple[str, str]:
+    if isinstance(exc, (httpx.TimeoutException, TimeoutError)):
+        return "timeout", "Selected model request timed out"
+    if isinstance(exc, LLMProviderRequestError):
+        code = f" {exc.status_code}" if exc.status_code is not None else ""
+        return "http", f"Selected model provider returned HTTP{code}"
+    return "request", f"{type(exc).__name__}: selected model request failed"
 
 
 @lru_cache(maxsize=1)
@@ -140,11 +192,11 @@ def _architecture_from_summary(
         main_folders=folders,
         frameworks_detected=summary.frameworks_detected,
         entrypoints=summary.likely_entrypoints,
-        backend_boundary="backend" if "backend" in folders else None,
-        frontend_boundary="frontend" if "frontend" in folders else None,
-        database_layer=None,
-        api_organization="routers" if "routers" in folders else None,
-        auth_locations=["auth"] if "auth" in folders else [],
+        backend_boundary=summary.backend_boundary,
+        frontend_boundary=summary.frontend_boundary,
+        database_layer=summary.database_layer,
+        api_organization=summary.api_organization,
+        auth_locations=summary.auth_locations,
         test_locations=summary.test_locations,
         evidence=[],
     )
@@ -166,7 +218,7 @@ class AgentController:
         *,
         tool_registry: ToolRegistry,
         user_id: uuid.UUID | None = None,
-        timeout_s: int = 60,
+        timeout_s: int | None = None,
         execution_plan: ExecutionPlan | None = None,
         slot: Literal["A", "B"] = "A",
     ) -> None:
@@ -444,9 +496,10 @@ class AgentController:
                             {"architecture": architecture.model_dump(mode="json")},
                         ),
                         schema=ArchitectureNarration,
-                        timeout_s=self._timeout_s,
+                        timeout_s=self._timeout_s or getattr(provider, "timeout_s", 60),
                     )
                 except Exception as model_error:
+                    category, safe_error = _provider_failure(model_error)
                     await self._hooks.model_execution(
                         run.id,
                         model_slot,
@@ -454,9 +507,9 @@ class AgentController:
                         max(1, int((time.perf_counter() - model_started) * 1000)),
                         None,
                         "NOT_VALIDATED",
-                        f"{type(model_error).__name__}: selected model request failed",
+                        safe_error,
                     )
-                    raise AgentProviderError(run.id) from model_error
+                    raise AgentProviderError(run.id, category) from model_error
                 structured = await self._validate_or_repair(
                     run,
                     counters,
@@ -556,11 +609,11 @@ class AgentController:
                             ctx,
                         )
                     if counters.structural_chunks >= MAX_STRUCTURAL_CHUNKS:
+                        flow_state.partial_reason = "The structural evidence bound stopped further expansion."
                         return self._registry.get(tool_name).output_schema([])
                     if counters.structural_rounds >= MAX_STRUCTURAL_ROUNDS:
-                        raise _BoundsExceeded(
-                            "Structural expansion round bound exceeded"
-                        )
+                        flow_state.partial_reason = "The structural round bound stopped further expansion."
+                        return self._registry.get(tool_name).output_schema([])
                     counters.structural_rounds += 1
                     result = await self._execute_tool(
                         run,
@@ -570,15 +623,16 @@ class AgentController:
                         ctx,
                     )
                     root = list(getattr(result, "root", []))
+                    known_ids = {item.evidence_id for item in flow_state.evidence}
                     remaining = MAX_STRUCTURAL_CHUNKS - counters.structural_chunks
-                    if remaining <= 0:
-                        raise _BoundsExceeded(
-                            "Structural expansion chunk bound exceeded"
-                        )
-                    if len(root) > remaining:
-                        result = type(result)(root[:remaining])
-                        root = list(getattr(result, "root", []))
-                    counters.structural_chunks += len(root)
+                    new_items = [item for item in root if item.evidence_id not in known_ids]
+                    if len(new_items) > remaining:
+                        allowed = {item.evidence_id for item in new_items[:remaining]}
+                        root = [item for item in root if item.evidence_id in known_ids or item.evidence_id in allowed]
+                        result = type(result)(root)
+                        new_items = new_items[:remaining]
+                        flow_state.partial_reason = "The structural evidence bound limited related chunks."
+                    counters.structural_chunks += len(new_items)
                     return result
 
                 await investigate_flow_trace(
@@ -597,6 +651,25 @@ class AgentController:
                     for item in flow_state.evidence
                     if item.evidence_id not in repository_ids
                 ]
+                by_id = {item.evidence_id: item for item in flow_state.evidence}
+                node_evidence: list[Evidence] = []
+                for node_id in flow_state.ordered_path():
+                    node = flow_state.nodes[node_id]
+                    supporting = next(
+                        (by_id[item] for item in node.evidence_ids
+                         if item in by_id and by_id[item].file_path == node.file_path),
+                        None,
+                    )
+                    if supporting is not None and supporting.evidence_id not in {
+                        item.evidence_id for item in node_evidence
+                    }:
+                        node_evidence.append(supporting)
+                node_ids = {item.evidence_id for item in node_evidence}
+                repository_evidence = (
+                    node_evidence
+                    + [item for item in repository_evidence if item.evidence_id not in node_ids]
+                )[:MAX_EVIDENCE_ITEMS]
+                flow_structural_evidence = []
 
             if task_type is TaskType.CHANGE_IMPACT:
                 impact_state.evidence = list(repository_evidence)
@@ -628,11 +701,16 @@ class AgentController:
                 await investigate_change_impact(
                     task, repository_id, execute_impact_tool, impact_state
                 )
-                repository_ids = {item.evidence_id for item in repository_evidence}
-                flow_structural_evidence = [
-                    item for item in impact_state.evidence
-                    if item.evidence_id not in repository_ids
+                by_id = {item.evidence_id: item for item in impact_state.evidence}
+                direct = [
+                    by_id[item] for candidate in impact_state.directly_affected.values()
+                    for item in candidate.evidence_ids if item in by_id
                 ]
+                indirect = [
+                    by_id[item] for candidate in impact_state.likely_indirectly_affected.values()
+                    for item in candidate.evidence_ids if item in by_id
+                ]
+                repository_evidence = _select_clause_evidence([direct, indirect, repository_evidence])
 
             default_rounds = (
                 1
@@ -678,6 +756,40 @@ class AgentController:
                     raise _BoundsExceeded("Structural expansion chunk bound exceeded")
                 structural_evidence.extend(additions)
                 counters.structural_chunks += len(additions)
+
+            supported_subquestions: list[str] = []
+            unsupported_subquestions: list[str] = []
+            if task_type is TaskType.REPOSITORY_QA:
+                initial_context = self._context_builder.build_from_evidence(
+                    task, task_type, repository_memory,
+                    [*repository_evidence, *structural_evidence], None,
+                )
+                if initial_context.quality is EvidenceQuality.NONE:
+                    subqueries = repository_subqueries(task)
+                    supported_groups: list[list[Evidence]] = []
+                    for position, subquery in enumerate(subqueries):
+                        if counters.tool_iterations >= MAX_TOOL_ITERATIONS:
+                            unsupported_subquestions.extend(subqueries[position:])
+                            break
+                        result = await self._execute_tool(
+                            run, counters, "search_codebase",
+                            RepositoryQueryInput(repository_id=repository_id, query=subquery, top_k=12),
+                            ctx,
+                        )
+                        candidates = list(getattr(result, "root", []))
+                        subcontext = self._context_builder.build_from_evidence(
+                            subquery, task_type, [], candidates, None,
+                        )
+                        if subcontext.quality is EvidenceQuality.NONE:
+                            unsupported_subquestions.append(subquery)
+                        else:
+                            supported_subquestions.append(subquery)
+                            supported_groups.append(subcontext.evidence)
+                    if supported_groups:
+                        repository_evidence = _select_clause_evidence(supported_groups)
+                        structural_evidence = []
+                        trusted_metadata["supported_subquestions"] = supported_subquestions
+                        trusted_metadata["unsupported_subquestions"] = unsupported_subquestions
 
             repository_only_context = self._context_builder.build_from_evidence(
                 task,
@@ -738,7 +850,41 @@ class AgentController:
                 [*repository_evidence, *structural_evidence],
                 web_evidence,
             )
+            if supported_subquestions and context.quality is EvidenceQuality.NONE:
+                # Each retained group passed the unchanged gate on its own clause.
+                context.quality = EvidenceQuality.INCOMPLETE
+            if task_type is TaskType.CHANGE_IMPACT and context.quality is EvidenceQuality.NONE:
+                fields = [
+                    name for name in extract_explicit_symbols(task)
+                    if "_" in name and any(
+                        candidate.symbol.endswith("." + name)
+                        for candidate in impact_state.directly_affected.values()
+                    )
+                ]
+                if any(
+                    self._context_builder.build_from_evidence(
+                        field, task_type, [], context.evidence, None
+                    ).quality is not EvidenceQuality.NONE
+                    for field in fields
+                ):
+                    context.quality = EvidenceQuality.INCOMPLETE
             if task_type is TaskType.CHANGE_IMPACT:
+                current_ids = {item.evidence_id for item in context.evidence}
+                for candidate in [
+                    *impact_state.directly_affected.values(),
+                    *impact_state.likely_indirectly_affected.values(),
+                ]:
+                    if any(item in current_ids for item in candidate.evidence_ids):
+                        continue
+                    field = candidate.symbol.rsplit(".", 1)[-1]
+                    replacement = next(
+                        (item.evidence_id for item in context.evidence
+                         if item.file_path == candidate.file
+                         and (candidate.symbol in item.content_excerpt or field in item.content_excerpt)),
+                        None,
+                    )
+                    if replacement is not None:
+                        candidate.evidence_ids = [replacement]
                 trusted_metadata["impact_graph"] = impact_state.as_metadata(
                     {item.evidence_id for item in context.evidence}
                 )
@@ -786,15 +932,10 @@ class AgentController:
                 model_result = await provider.complete(
                     self._prompt(task, task_type, context, trusted_metadata),
                     schema=schema,
-                    timeout_s=self._timeout_s,
+                    timeout_s=self._timeout_s or getattr(provider, "timeout_s", 60),
                 )
             except Exception as model_error:
-                safe_detail = getattr(model_error, "safe_message", None)
-                safe_error = f"{type(model_error).__name__}: " + (
-                    str(safe_detail)
-                    if safe_detail
-                    else "selected model request failed"
-                )
+                category, safe_error = _provider_failure(model_error)
                 await self._hooks.model_execution(
                     run.id,
                     model_slot,
@@ -804,7 +945,7 @@ class AgentController:
                     "NOT_VALIDATED",
                     safe_error,
                 )
-                raise AgentProviderError(run.id) from model_error
+                raise AgentProviderError(run.id, category) from model_error
             structured = await self._validate_or_repair(
                 run, counters, model_slot, provider, model_result, schema, task_type, context
             )
@@ -820,6 +961,14 @@ class AgentController:
                     f"{structured.limitations} {limitation}"
                     if structured.limitations else limitation
                 )
+            if unsupported_subquestions and isinstance(structured, RepositoryAnswer):
+                limitation = "Insufficient evidence for: " + "; ".join(unsupported_subquestions) + "."
+                structured.limitations = (
+                    f"{structured.limitations} {limitation}"
+                    if structured.limitations else limitation
+                )
+                if structured.confidence == "high":
+                    structured.confidence = "medium"
             if task_type is TaskType.FLOW_TRACE:
                 structured = enforce_observed_transitions(
                     structured,
@@ -955,11 +1104,17 @@ class AgentController:
         repair_context: str | None = None,
     ) -> BaseModel | None:
         del task_type, context
+        stage = "schema"
         try:
             structured = validate_schema(model_result.content, schema)
+            stage = "post"
             if post_validator is not None:
                 post_validator(structured)
         except SchemaValidationError as validation_error:
+            initial_error = (
+                "Architecture narration failed inspected-fact validation"
+                if stage == "post" else "Model JSON or schema validation failed"
+            )
             await self._hooks.model_execution(
                 run.id,
                 model_slot,
@@ -967,13 +1122,14 @@ class AgentController:
                 model_result.latency_ms,
                 TokenUsage(model_result.input_tokens, model_result.output_tokens),
                 "INVALID",
-                "Model output failed validation",
+                initial_error,
             )
             if counters.repair_attempts >= MAX_REPAIR_ATTEMPTS:
                 return None
             counters.repair_attempts += 1
             repair_results: list[LLMResult] = []
             repair_started = time.perf_counter()
+            repair_stage = "schema"
             try:
                 structured = await attempt_repair(
                     model_result.content,
@@ -987,11 +1143,20 @@ class AgentController:
                     ),
                     provider,
                     on_result=repair_results.append,
+                    timeout_s=self._timeout_s,
                 )
+                repair_stage = "post"
                 if post_validator is not None:
                     post_validator(structured)
             except Exception as repair_error:
                 repair_result = repair_results[0] if repair_results else None
+                if isinstance(repair_error, SchemaValidationError):
+                    safe_error = (
+                        "Repair failed inspected-fact validation"
+                        if repair_stage == "post" else "Repair failed JSON or schema validation"
+                    )
+                else:
+                    _, safe_error = _provider_failure(repair_error)
                 await self._hooks.model_execution(
                     run.id,
                     model_slot,
@@ -1005,7 +1170,7 @@ class AgentController:
                         if repair_result is not None else None
                     ),
                     "INVALID",
-                    f"{type(repair_error).__name__}: repair failed",
+                    safe_error,
                 )
                 return None
             repair_result = repair_results[0]
