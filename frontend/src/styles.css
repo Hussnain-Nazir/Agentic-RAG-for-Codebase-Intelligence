@@ -1,0 +1,84 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { border-color: theme("colors.border.DEFAULT"); }
+  html { color-scheme: dark; }
+  body {
+    @apply m-0 bg-canvas font-sans text-ink-primary antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+  button, input, select, textarea { font: inherit; }
+  ::selection { background: theme("colors.accent.muted"); color: theme("colors.ink.primary"); }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #262d38; border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background: #333d4a; background-clip: padding-box; }
+  * { scrollbar-width: thin; scrollbar-color: #262d38 transparent; }
+
+  :focus-visible {
+    outline: 2px solid theme("colors.accent.DEFAULT");
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+  }
+}
+
+@layer components {
+  .input {
+    @apply block w-full rounded-md border border-border bg-surface-1 px-3 py-2 text-sm text-ink-primary
+      placeholder:text-ink-muted outline-none transition-colors duration-150
+      focus:border-accent focus:ring-1 focus:ring-accent/40 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .label { @apply mb-1.5 block text-xs font-medium uppercase tracking-wide text-ink-secondary; }
+
+  .button-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-md bg-accent px-4 py-2 text-sm font-medium text-white
+      transition-colors duration-150 hover:bg-accent-hover
+      disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-accent;
+  }
+  .button-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-md border border-border-strong bg-surface-2 px-4 py-2 text-sm font-medium text-ink-primary
+      transition-colors duration-150 hover:bg-surface-hover hover:border-border-strong
+      disabled:cursor-not-allowed disabled:opacity-45;
+  }
+  .button-ghost {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-ink-secondary
+      transition-colors duration-150 hover:bg-surface-hover hover:text-ink-primary
+      disabled:cursor-not-allowed disabled:opacity-45;
+  }
+  .icon-button {
+    @apply inline-flex h-8 w-8 items-center justify-center rounded-md text-ink-secondary transition-colors duration-150
+      hover:bg-surface-hover hover:text-ink-primary;
+  }
+
+  .panel { @apply rounded-lg border border-border bg-surface-2 text-ink-primary shadow-panel; }
+  .panel-header { @apply flex items-center justify-between gap-3 border-b border-border-subtle px-4 py-3; }
+  .panel-body { @apply p-4; }
+  .code-surface { @apply rounded-md border border-border bg-[#0a0d12] font-mono text-[13px] leading-[1.65]; }
+
+  .badge {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-border-strong bg-surface-3 px-2.5 py-0.5
+      text-[11px] font-medium uppercase tracking-wide text-ink-secondary;
+  }
+  .badge-dot { @apply h-1.5 w-1.5 rounded-full bg-current; }
+
+  .tab-trigger {
+    @apply inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-ink-secondary
+      transition-colors duration-150 hover:bg-surface-hover hover:text-ink-primary;
+  }
+  .tab-trigger[aria-selected="true"] { @apply bg-surface-hover text-ink-primary; }
+
+  .tree-row {
+    @apply flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[13px] text-ink-secondary
+      transition-colors duration-100 hover:bg-surface-hover hover:text-ink-primary;
+  }
+  .tree-row[data-active="true"] { @apply bg-accent-subtle text-ink-primary; }
+
+  .skeleton { @apply animate-pulse-soft rounded-md bg-surface-3; }
+}

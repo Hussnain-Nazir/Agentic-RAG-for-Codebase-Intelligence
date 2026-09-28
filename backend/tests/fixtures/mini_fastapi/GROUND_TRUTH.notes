@@ -1,0 +1,14 @@
+Mini Fixture Ground Truth
+
+1. create_access_token is defined in auth/security.py.
+2. Login flow: routers/auth.py:login calls verify_password, then calls
+   create_access_token, both defined in auth/security.py.
+3. JWT secret loading: config.py reads JWT_SECRET from the environment;
+   auth/security.py:create_access_token uses it.
+4. Authenticated item access: routers/items.py:list_items and create_item
+   call auth/security.py:get_current_user.
+5. Database setup: routers/items.py:list_items calls db.py:create_session.
+
+Expected relationships include login -> verify_password,
+login -> create_access_token, list_items -> get_current_user,
+list_items -> create_session, and create_item -> get_current_user.

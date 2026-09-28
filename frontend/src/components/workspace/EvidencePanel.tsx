@@ -1,0 +1,78 @@
+import { FileCode2, MapPin } from "lucide-react";
+
+import { useFileContent } from "../../api/hooks";
+import type { Evidence } from "../../api/types";
+import { ErrorNotice } from "../common/Shell";
+import { EmptyState } from "../common/EmptyState";
+import { CodeViewer } from "./CodeViewer";
+import type { FileSelection } from "./RepositoryTree";
+import { externalSource } from "./externalSource";
+
+export function EvidencePanel({ repositoryId, evidence, selected, onSelect, bare = false }: {
+  repositoryId: string; evidence: Evidence[]; selected: FileSelection | null;
+  onSelect: (selection: FileSelection) => void; bare?: boolean;
+}) {
+  const content = useFileContent(repositoryId, selected?.path ?? null, selected?.startLine, selected?.endLine);
+  return (
+    <section aria-label="Evidence panel" className={bare ? "flex min-w-0 flex-col" : "panel flex min-w-0 flex-col"}>
+      {!bare && (
+        <div className="panel-header">
+          <h2 className="text-sm font-medium text-ink-primary">Evidence</h2>
+          {evidence.length > 0 && <span className="badge">{evidence.length}</span>}
+        </div>
+      )}
+
+      <div className={bare ? "pb-3" : "panel-body pb-3"}>
+        {evidence.length === 0 && <p className="text-sm text-ink-muted">Citations will appear after an analysis.</p>}
+        <ul className="max-h-56 space-y-2 overflow-y-auto">
+          {evidence.map((item) => {
+            const external = externalSource(item);
+            return <li key={item.evidence_id}>
+              {!external && item.file_path ? (
+                <button
+                  type="button"
+                  className="w-full rounded-md border border-border bg-surface-1 p-3 text-left transition-colors duration-150 hover:border-accent-muted hover:bg-surface-hover"
+                  onClick={() => onSelect({ path: item.file_path!, startLine: item.start_line ?? undefined, endLine: item.end_line ?? undefined })}
+                >
+                  <span className="flex items-center gap-1.5 truncate font-mono text-xs font-medium text-accent-hover">
+                    <MapPin size={12} strokeWidth={2} className="shrink-0" />
+                    {item.file_path}:{item.start_line ?? "?"}-{item.end_line ?? "?"}
+                  </span>
+                  <span className="mt-1 block text-xs text-ink-muted">{item.symbol || item.source_type}</span>
+                  <span className="mt-2 block max-h-16 overflow-hidden whitespace-pre-wrap break-words font-mono text-xs text-ink-secondary">{item.content_excerpt}</span>
+                </button>
+              ) : (
+                <div className="rounded-md border border-border bg-surface-1 p-3 text-xs text-ink-secondary">
+                  <span className="badge mb-1.5">{external ? "External source" : item.source_type}</span>
+                  {external && <p className="font-medium text-ink-primary">{external.title}</p>}
+                  {external?.urlText && (external.href
+                    ? <a className="mt-1 block break-all text-accent-hover underline" href={external.href} target="_blank" rel="noopener noreferrer">{external.urlText}</a>
+                    : <p className="mt-1 break-all">{external.urlText}</p>)}
+                  <p className="mt-2 whitespace-pre-wrap break-words">{item.content_excerpt}</p>
+                </div>
+              )}
+            </li>;
+          })}
+        </ul>
+      </div>
+
+      <div className="border-t border-border-subtle p-4">
+        <h3 className="mb-3 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-ink-muted">
+          <FileCode2 size={13} strokeWidth={1.75} /> File viewer
+        </h3>
+        {!selected && <EmptyState title="Select evidence or a file to inspect it." />}
+        {selected && content.isPending && <p role="status" className="text-sm text-ink-secondary">Loading file content...</p>}
+        {selected && content.isError && <ErrorNotice message={content.error.message} onRetry={() => void content.refetch()} />}
+        {content.data && (
+          <CodeViewer
+            path={content.data.path}
+            content={content.data.content}
+            startLine={content.data.start_line}
+            highlightStart={selected?.startLine ?? null}
+            highlightEnd={selected?.endLine ?? null}
+          />
+        )}
+      </div>
+    </section>
+  );
+}
