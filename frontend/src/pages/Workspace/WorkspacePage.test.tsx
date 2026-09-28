@@ -368,7 +368,7 @@ describe("independent panels", () => {
     probe.phase27Executed = false;
     vi.spyOn(api, "fileContent").mockResolvedValue({ path: "auth/security.py", language: "python", content: payload, start_line: 10, end_line: 12, total_lines: 30, truncated: false });
     const result = mount(<EvidencePanel repositoryId="repo-1" evidence={[{ ...evidence, content_excerpt: payload }]} selected={{ path: "auth/security.py", startLine: 10, endLine: 12 }} onSelect={() => {}} />);
-    await waitFor(() => expect(result.container.querySelector("pre")?.textContent).toBe(payload));
+    await waitFor(() => expect(result.container.querySelector(".code-surface tbody tr td:nth-child(2)")?.textContent).toBe(payload));
     expect(result.container.querySelector("script")).toBeNull();
     expect(result.container.querySelector("img")).toBeNull();
     expect(probe.phase27Executed).toBe(false);
