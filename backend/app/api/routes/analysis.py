@@ -111,7 +111,7 @@ async def ask_repository(
             },
         ) from exc
 
-    if result.task_type is not TaskType.REPOSITORY_QA:
+    if result.task_type not in {TaskType.REPOSITORY_QA, TaskType.EXTERNAL_DOC_QUERY}:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={

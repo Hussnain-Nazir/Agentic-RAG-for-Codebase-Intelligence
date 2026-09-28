@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from fastapi import Depends
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -18,6 +19,7 @@ from app.api.routes.analysis import (
     get_analysis_tool_registry,
 )
 from app.api.routes.repositories import _persist_repository, get_embedding_provider
+from app.agent.classification import TaskType
 from app.auth.dependencies import get_current_user
 from app.config import Settings, get_settings
 from app.db.base import Base
@@ -26,9 +28,11 @@ from app.evidence.models import Evidence
 from app.llm.mock import MockProvider
 from app.llm.base import LLMResult
 from app.main import create_app
-from app.models import AgentRun, AgentRunStatus, ModelExecution, Repository, ToolCall, User
+from app.models import AgentRun, AgentRunStatus, CodeChunk, ModelExecution, Repository, RepositoryIndex, ToolCall, User
+from app.plugins.web_search.provider import WebResult
 from app.sources.upload import UploadedRepositorySource
 from app.tools.registry import ToolRegistry
+from app.tools.schemas import EvidenceList, RepositoryQueryInput
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "mini_fastapi"
 DATABASE_URL = "sqlite+aiosqlite://"
@@ -450,3 +454,229 @@ def test_repository_qa_failed_schema_repair_returns_422(qa_context) -> None:
     assert run.status is AgentRunStatus.INVALID_OUTPUT
     assert len(models) == 2
     assert all(model.validation_status == "INVALID" for model in models)
+
+
+class FixedEvidenceSearch:
+    name = "search_codebase"
+    description = "Return one stored fixture chunk for route tests."
+    input_schema = RepositoryQueryInput
+    output_schema = EvidenceList
+    requires_auth = True
+
+    def __init__(self, evidence: Evidence) -> None:
+        self.evidence = evidence
+
+    async def execute(self, input: BaseModel, ctx) -> EvidenceList:
+        assert input.repository_id == ctx.repository_id
+        return EvidenceList([self.evidence])
+
+
+class RecordingWebProvider:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.queries: list[str] = []
+        self.fail = fail
+
+    async def search(self, query: str, max_results: int = 5) -> list[WebResult]:
+        self.queries.append(query)
+        assert max_results == 5
+        if self.fail:
+            raise RuntimeError("synthetic provider failure")
+        return [WebResult(
+            title="Token signing documentation",
+            url="https://docs.example.test/tokens",
+            snippet="Current token signing guidance.",
+            source_domain="docs.example.test",
+        )]
+
+
+def _external_route_setup(qa_context, web_provider: RecordingWebProvider) -> None:
+    client, factory, repository, _, _ = qa_context
+
+    async def stored_evidence() -> Evidence:
+        async with factory() as session:
+            index = await session.scalar(select(RepositoryIndex).where(RepositoryIndex.repository_id == repository.id))
+            chunk = await session.scalar(select(CodeChunk).where(CodeChunk.repository_id == repository.id))
+            assert index is not None and chunk is not None
+            return Evidence(
+                evidence_id=chunk.id,
+                repository_id=repository.id,
+                repository_index_id=index.id,
+                source_type="CODE",
+                file_path=chunk.file_path,
+                symbol=chunk.symbol_name,
+                start_line=chunk.start_line,
+                end_line=chunk.end_line,
+                content_excerpt=chunk.content,
+                relationship_metadata={},
+                retrieval_metadata={"score": 0.8, "signal": "semantic"},
+                external_source_metadata=None,
+            )
+
+    evidence = asyncio.run(stored_evidence())
+
+    def registry_override(db: AsyncSession = Depends(get_db)) -> ToolRegistry:
+        registry = ToolRegistry()
+        registry.register_builtin_plugins(
+            session=db,
+            embedding_provider=FakeEmbeddingProvider(),
+            web_search_provider=web_provider,
+            settings=Settings(_env_file=None, database_url=DATABASE_URL),
+        )
+        registry._tools["search_codebase"] = FixedEvidenceSearch(evidence)
+        return registry
+
+    client.app.dependency_overrides[get_analysis_tool_registry] = registry_override
+
+
+def _answer_with_context_evidence(messages, schema):
+    assert schema.__name__ == "RepositoryAnswer"
+    context = _context_from_messages(messages)
+    return {
+        "answer": "The stored implementation and external guidance are shown separately.",
+        "evidence": context["evidence"],
+        "confidence": "medium",
+        "limitations": None,
+    }
+
+
+def test_external_doc_question_returns_tagged_sources_and_bounded_run(qa_context) -> None:
+    client, factory, repository, provider_box, _ = qa_context
+    web = RecordingWebProvider()
+    _external_route_setup(qa_context, web)
+    provider_box["provider"] = MockProvider(callback=_answer_with_context_evidence)
+    question = "Is token signing deprecated according to the official docs? Compare with documentation for the latest API."
+
+    response = client.post(f"/repositories/{repository.id}/ask", json={"question": question, "model_slot": "A"})
+
+    assert response.status_code == 200
+    answer = response.json()["answer"]
+    assert {item["source_type"] for item in answer["evidence"]} == {"CODE", "WEB"}
+    web_item = next(item for item in answer["evidence"] if item["source_type"] == "WEB")
+    assert web_item["file_path"] is None and web_item["start_line"] is None
+    assert web_item["external_source_metadata"]["url"] == "https://docs.example.test/tokens"
+    assert web.queries == [question.lower()]
+
+    async def persisted():
+        async with factory() as session:
+            run_id = uuid.UUID(response.json()["agent_run_id"])
+            run = await session.get(AgentRun, run_id)
+            tools = list(await session.scalars(select(ToolCall).where(ToolCall.agent_run_id == run_id)))
+            models = list(await session.scalars(select(ModelExecution).where(ModelExecution.agent_run_id == run_id)))
+            return run, tools, models
+
+    run, tools, models = asyncio.run(persisted())
+    assert run.task_type == TaskType.EXTERNAL_DOC_QUERY.value
+    assert sum(item.tool_name == "search_web" for item in tools) == 1
+    assert len(tools) <= 8 and len(models) == 1
+
+
+def test_file_and_symbol_external_doc_question_uses_ask(qa_context) -> None:
+    client, factory, repository, provider_box, _ = qa_context
+    _external_route_setup(qa_context, RecordingWebProvider())
+    provider_box["provider"] = MockProvider(callback=_answer_with_context_evidence)
+    question = (
+        "Does create_access_token in auth/security.py follow the official docs for "
+        "signing tokens, or is hashing with sha256 deprecated? Compare with "
+        "documentation for the latest API."
+    )
+
+    response = client.post(f"/repositories/{repository.id}/ask", json={"question": question, "model_slot": "A"})
+
+    assert response.status_code == 200
+    async def task_type():
+        async with factory() as session:
+            return (await session.get(AgentRun, uuid.UUID(response.json()["agent_run_id"]))).task_type
+    assert asyncio.run(task_type()) == TaskType.EXTERNAL_DOC_QUERY.value
+
+
+def test_web_citation_alone_does_not_ground_repository_answer(qa_context) -> None:
+    client, _, repository, provider_box, _ = qa_context
+    _external_route_setup(qa_context, RecordingWebProvider())
+
+    def web_only(messages, schema):
+        context = _context_from_messages(messages)
+        web_evidence = [item for item in context["evidence"] if item["source_type"] == "WEB"]
+        assert web_evidence
+        return {"answer": "The repository follows the documentation.", "evidence": web_evidence, "confidence": "high", "limitations": None}
+
+    provider_box["provider"] = MockProvider(callback=web_only)
+    response = client.post(
+        f"/repositories/{repository.id}/ask",
+        json={"question": "Is token signing deprecated according to the official docs?", "model_slot": "A"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["message"] == "The model answer failed grounding validation"
+
+
+def test_external_doc_web_failure_is_traced_without_crashing(qa_context) -> None:
+    client, factory, repository, provider_box, _ = qa_context
+    web = RecordingWebProvider(fail=True)
+    _external_route_setup(qa_context, web)
+    provider_box["provider"] = MockProvider(callback=_answer_with_context_evidence)
+    question = "Is token signing deprecated according to the official docs?"
+
+    response = client.post(f"/repositories/{repository.id}/ask", json={"question": question, "model_slot": "A"})
+
+    assert response.status_code == 200
+    assert "Web search failed" in response.json()["answer"]["limitations"]
+    assert all(item["source_type"] != "WEB" for item in response.json()["answer"]["evidence"])
+
+    async def web_call():
+        async with factory() as session:
+            return await session.scalar(select(ToolCall).where(
+                ToolCall.agent_run_id == uuid.UUID(response.json()["agent_run_id"]),
+                ToolCall.tool_name == "search_web",
+            ))
+
+    call = asyncio.run(web_call())
+    assert call.status == "ERROR" and call.error == "Web search failed"
+
+
+def test_ordinary_qa_does_not_search_web(qa_context) -> None:
+    client, _, repository, provider_box, _ = qa_context
+    web = RecordingWebProvider()
+    _external_route_setup(qa_context, web)
+    provider_box["provider"] = MockProvider(callback=_answer_with_context_evidence)
+
+    response = client.post(f"/repositories/{repository.id}/ask", json={"question": "How does authentication work?", "model_slot": "A"})
+
+    assert response.status_code == 200
+    assert web.queries == []
+
+
+@pytest.mark.parametrize("question", [
+    "Trace login from the form to token creation",
+    "What is affected if the user model changes?",
+    "Explain the repository architecture",
+    "Open routers/auth.py",
+    "Find create_access_token",
+])
+def test_ask_rejects_non_qa_task_types(qa_context, question: str) -> None:
+    client, _, repository, provider_box, _ = qa_context
+    _external_route_setup(qa_context, RecordingWebProvider())
+
+    def valid_non_qa_response(messages, schema):
+        del messages
+        evidence = []
+        if schema.__name__ == "FlowTraceResponse":
+            return {"summary": "Partial trace", "steps": [], "evidence": evidence}
+        if schema.__name__ == "ChangeImpactResponse":
+            return {"requested_change": question, "directly_affected": [], "likely_indirectly_affected": [], "evidence": evidence}
+        if schema.__name__ == "ArchitectureNarration":
+            return {"summary": "The repository contains authentication code."}
+        if schema.__name__ == "ArchitectureResponse":
+            return {
+                "languages": ["Python"], "main_folders": [], "frameworks_detected": [],
+                "entrypoints": [], "backend_boundary": None, "frontend_boundary": None,
+                "database_layer": None, "api_organization": None,
+                "auth_locations": [], "test_locations": [], "evidence": evidence,
+            }
+        raise AssertionError(schema)
+
+    provider_box["provider"] = MockProvider(callback=valid_non_qa_response)
+
+    response = client.post(f"/repositories/{repository.id}/ask", json={"question": question, "model_slot": "A"})
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["message"] == "The ask endpoint requires a repository Q&A question"

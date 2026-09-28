@@ -224,7 +224,7 @@ class AgentController:
         context: EvidenceContext,
         trusted_metadata: dict[str, Any],
     ) -> list[Message]:
-        if task_type is TaskType.REPOSITORY_QA:
+        if task_type in {TaskType.REPOSITORY_QA, TaskType.EXTERNAL_DOC_QUERY}:
             rendered = (
                 _repository_qa_template()
                 .replace("{{USER_TASK}}", task)
@@ -353,7 +353,7 @@ class AgentController:
                 )
 
             qa_entity: str | None = None
-            if task_type is TaskType.REPOSITORY_QA:
+            if task_type in {TaskType.REPOSITORY_QA, TaskType.EXTERNAL_DOC_QUERY}:
                 for candidate in extract_explicit_symbols(task):
                     symbol_result = await self._execute_tool(
                         run,
@@ -372,7 +372,7 @@ class AgentController:
             default_rounds = (
                 1
                 if (
-                    task_type is TaskType.REPOSITORY_QA
+                    task_type in {TaskType.REPOSITORY_QA, TaskType.EXTERNAL_DOC_QUERY}
                     and qa_entity is not None
                 )
                 or (
@@ -539,7 +539,7 @@ class AgentController:
                     if structured.limitations else limitation
                 )
             if (
-                task_type is TaskType.REPOSITORY_QA
+                task_type in {TaskType.REPOSITORY_QA, TaskType.EXTERNAL_DOC_QUERY}
                 and citation_result.downgraded
                 and not structured.evidence
             ):
@@ -549,6 +549,16 @@ class AgentController:
                     task_type,
                     structured,
                     context,
+                )
+            if (
+                task_type is TaskType.EXTERNAL_DOC_QUERY
+                and not any(
+                    item.source_type in {"CODE", "DOCUMENTATION"}
+                    for item in structured.evidence
+                )
+            ):
+                return await self._complete_run(
+                    run, AgentRunStatus.INVALID_OUTPUT, task_type, structured, context
                 )
             if requested_model_calls > MAX_MODEL_CALLS:
                 return await self._complete_run(
