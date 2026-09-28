@@ -6,6 +6,7 @@ import { ErrorNotice } from "../common/Shell";
 import { EmptyState } from "../common/EmptyState";
 import { CodeViewer } from "./CodeViewer";
 import type { FileSelection } from "./RepositoryTree";
+import { externalSource } from "./externalSource";
 
 export function EvidencePanel({ repositoryId, evidence, selected, onSelect, bare = false }: {
   repositoryId: string; evidence: Evidence[]; selected: FileSelection | null;
@@ -24,9 +25,10 @@ export function EvidencePanel({ repositoryId, evidence, selected, onSelect, bare
       <div className={bare ? "pb-3" : "panel-body pb-3"}>
         {evidence.length === 0 && <p className="text-sm text-ink-muted">Citations will appear after an analysis.</p>}
         <ul className="max-h-56 space-y-2 overflow-y-auto">
-          {evidence.map((item) => (
-            <li key={item.evidence_id}>
-              {item.file_path ? (
+          {evidence.map((item) => {
+            const external = externalSource(item);
+            return <li key={item.evidence_id}>
+              {!external && item.file_path ? (
                 <button
                   type="button"
                   className="w-full rounded-md border border-border bg-surface-1 p-3 text-left transition-colors duration-150 hover:border-accent-muted hover:bg-surface-hover"
@@ -41,12 +43,16 @@ export function EvidencePanel({ repositoryId, evidence, selected, onSelect, bare
                 </button>
               ) : (
                 <div className="rounded-md border border-border bg-surface-1 p-3 text-xs text-ink-secondary">
-                  <span className="badge mb-1.5">{item.source_type}</span>
-                  <p>{item.content_excerpt}</p>
+                  <span className="badge mb-1.5">{external ? "External source" : item.source_type}</span>
+                  {external && <p className="font-medium text-ink-primary">{external.title}</p>}
+                  {external?.urlText && (external.href
+                    ? <a className="mt-1 block break-all text-accent-hover underline" href={external.href} target="_blank" rel="noopener noreferrer">{external.urlText}</a>
+                    : <p className="mt-1 break-all">{external.urlText}</p>)}
+                  <p className="mt-2 whitespace-pre-wrap break-words">{item.content_excerpt}</p>
                 </div>
               )}
-            </li>
-          ))}
+            </li>;
+          })}
         </ul>
       </div>
 

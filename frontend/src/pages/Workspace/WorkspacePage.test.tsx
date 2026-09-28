@@ -33,6 +33,14 @@ const evidence: Evidence = {
   relationship_metadata: {}, retrieval_metadata: { source_chunk_ids: ["chunk-1"] }, external_source_metadata: null,
 };
 
+const webEvidence: Evidence = {
+  evidence_id: "web-evidence-1", repository_id: "repo-1", repository_index_id: "index-1",
+  source_type: "WEB", file_path: null, symbol: null,
+  start_line: null, end_line: null, content_excerpt: '<img src=x onerror="window.webSnippetRan=true">',
+  relationship_metadata: {}, retrieval_metadata: { signal: "web" },
+  external_source_metadata: { title: "Token signing docs", url: "https://docs.example.test/tokens", source_domain: "docs.example.test" },
+};
+
 function mount(element: ReactNode) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return render(<QueryClientProvider client={client}><MemoryRouter>{element}</MemoryRouter></QueryClientProvider>);
@@ -240,6 +248,39 @@ describe("analysis workspace", () => {
     expect(api.ask).toHaveBeenCalledWith("repo-1", "How does login work?", "A");
   });
 
+  it("shows external Q&A evidence in chips and drawer without a file link, and traces the search", async () => {
+    authToken.set(tokenFor(FIRST_USER));
+    vi.spyOn(api, "repository").mockResolvedValue({ id: "repo-1", name: "Fixture", source_type: "upload", selected_branch: "upload", access_status: "ACTIVE", index: null, owner_id: FIRST_USER, github_repo_id: null, default_branch: "upload", created_at: "2026-09-25T10:00:00Z" });
+    vi.spyOn(api, "modelsConfig").mockResolvedValue({ model_a: { name: "model-a" }, model_b: { name: "model-b" } });
+    vi.spyOn(api, "files").mockResolvedValue([]);
+    const fileContent = vi.spyOn(api, "fileContent");
+    vi.spyOn(api, "ask").mockResolvedValue({ agent_run_id: "run-web", answer: { answer: "Token signing uses stored code and external guidance.", evidence: [evidence, webEvidence], confidence: "medium", limitations: null } });
+    vi.spyOn(api, "agentTrace").mockResolvedValue({
+      run: { id: "run-web", repository_id: "repo-1", session_id: "session-1", task_type: "EXTERNAL_DOC_QUERY", status: "OK", started_at: "2026-09-25T10:00:00Z", completed_at: "2026-09-25T10:00:01Z" },
+      tool_calls: [{ id: "tool-web", sequence: 1, tool_name: "search_web", args_sanitized: {}, status: "OK", duration_ms: 5, result_summary: "1 result", error: null, started_at: "2026-09-25T10:00:00Z", completed_at: "2026-09-25T10:00:01Z" }],
+      model_executions: [],
+    });
+    mountWorkspaceRoutes();
+    fireEvent.change(screen.getByLabelText("Question"), { target: { value: "Compare token signing with official docs" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+    expect(await screen.findByText("Token signing uses stored code and external guidance.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /External: Token signing docs/ }));
+    const drawer = screen.getByRole("region", { name: "Evidence panel" });
+    expect(within(drawer).getByText("External source")).toBeInTheDocument();
+    expect(within(drawer).getByText("Token signing docs")).toBeInTheDocument();
+    const link = within(drawer).getByRole("link", { name: "https://docs.example.test/tokens" });
+    expect(link).toHaveAttribute("href", "https://docs.example.test/tokens");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    expect(within(drawer).getByText(webEvidence.content_excerpt)).toBeInTheDocument();
+    expect(drawer.querySelector("img")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Open in Code/ })).not.toBeInTheDocument();
+    expect(fileContent).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Close evidence panel" }));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Repository workspace" })).getByRole("link", { name: "Agent Trace" }));
+    expect(await screen.findByText(/Searched external documentation/)).toBeInTheDocument();
+  });
+
   it("renders Flow Trace steps in order and marks unresolved links", async () => {
     vi.spyOn(api, "flowTrace").mockResolvedValue({ agent_run_id: "run-2", trace: {
       summary: "Login flow", evidence: [evidence], steps: [
@@ -315,6 +356,12 @@ describe("analysis workspace", () => {
 });
 
 describe("independent panels", () => {
+  it("shows an unsafe external URL as inert text", () => {
+    const unsafe = { ...webEvidence, evidence_id: "web-unsafe", external_source_metadata: { title: "Unsafe source", url: "javascript:alert(1)" } };
+    mount(<EvidencePanel repositoryId="repo-1" evidence={[unsafe]} selected={null} onSelect={() => {}} />);
+    expect(screen.getByText("javascript:alert(1)")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "javascript:alert(1)" })).not.toBeInTheDocument();
+  });
   it("opens the selected evidence file at the cited range", async () => {
     vi.spyOn(api, "fileContent").mockResolvedValue({ path: "auth/security.py", language: "python", content: "def create_token(): pass", start_line: 10, end_line: 12, total_lines: 30, truncated: false });
     function Harness() {

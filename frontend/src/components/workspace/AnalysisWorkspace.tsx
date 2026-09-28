@@ -12,6 +12,7 @@ import type {
   ModelComparisonResponse, ModelSlot, RepositoryAnswer,
 } from "../../api/types";
 import { ErrorNotice } from "../common/Shell";
+import { externalSource } from "./externalSource";
 
 export type AnalysisMode = "ask" | "flow" | "impact" | "architecture";
 export type AnalysisView =
@@ -85,18 +86,20 @@ function EvidenceChips({ evidence, onOpen }: { evidence: Evidence[]; onOpen?: (e
   if (evidence.length === 0) return null;
   return (
     <div className="mt-3 flex flex-wrap gap-1.5">
-      {evidence.map((item) => (
-        <button
+      {evidence.map((item) => {
+        const external = externalSource(item);
+        return <button
           key={item.evidence_id}
           type="button"
           disabled={!onOpen}
           onClick={() => onOpen?.(item)}
           className="inline-flex items-center gap-1 rounded-full border border-border-strong bg-surface-3 px-2.5 py-1 font-mono text-[11px] text-accent-hover transition-colors duration-150 hover:border-accent-muted disabled:cursor-default disabled:opacity-80"
         >
-          <MapPin size={10} strokeWidth={2} />
-          {item.file_path ? `${item.file_path}:${item.start_line ?? "?"}-${item.end_line ?? "?"}` : item.source_type}
-        </button>
-      ))}
+          {!external && <MapPin size={10} strokeWidth={2} />}
+          {external ? `External: ${external.title}${external.urlText ? ` · ${external.urlText}` : ""}`
+            : item.file_path ? `${item.file_path}:${item.start_line ?? "?"}-${item.end_line ?? "?"}` : item.source_type}
+        </button>;
+      })}
     </div>
   );
 }

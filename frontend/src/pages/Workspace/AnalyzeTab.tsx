@@ -42,7 +42,7 @@ export function AnalyzeTab() {
   }
 
   function openEvidence(evidence: Evidence) {
-    setSelectedFile(evidence.file_path ? { path: evidence.file_path, startLine: evidence.start_line ?? undefined, endLine: evidence.end_line ?? undefined } : null);
+    setSelectedFile(evidence.source_type !== "WEB" && evidence.file_path ? { path: evidence.file_path, startLine: evidence.start_line ?? undefined, endLine: evidence.end_line ?? undefined } : null);
     setDrawerOpen(true);
   }
 
