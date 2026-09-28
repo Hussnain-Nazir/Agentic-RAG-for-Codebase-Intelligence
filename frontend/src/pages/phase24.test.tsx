@@ -21,6 +21,22 @@ function renderPage(page: ReactNode, path = "/") {
 afterEach(() => { vi.restoreAllMocks(); sessionStorage.clear(); });
 
 describe("authentication", () => {
+  it.each(["login", "register"] as const)("toggles password visibility on %s without a request", (mode) => {
+    const login = vi.spyOn(api, "login");
+    const register = vi.spyOn(api, "register");
+    renderPage(mode === "login" ? <LoginPage /> : <RegisterPage />, `/${mode}`);
+    const password = screen.getByLabelText("Password") as HTMLInputElement;
+    fireEvent.change(password, { target: { value: "test-password-123" } });
+    expect(password.type).toBe("password");
+    fireEvent.click(screen.getByRole("button", { name: "Show password" }));
+    expect(password.type).toBe("text");
+    expect(password.value).toBe("test-password-123");
+    fireEvent.click(screen.getByRole("button", { name: "Hide password" }));
+    expect(password.type).toBe("password");
+    expect(login).not.toHaveBeenCalled();
+    expect(register).not.toHaveBeenCalled();
+  });
+
   it("validates login and stores a token after a successful response", async () => {
     const login = vi.spyOn(api, "login").mockResolvedValue({ access_token: "test-token" });
     renderPage(<LoginPage />, "/login");
