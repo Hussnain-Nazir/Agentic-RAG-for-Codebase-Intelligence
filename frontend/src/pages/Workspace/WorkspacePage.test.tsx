@@ -81,6 +81,9 @@ describe("analysis workspace", () => {
     });
     vi.spyOn(api, "ask").mockResolvedValue({ agent_run_id: "run-1", answer: { answer: "Tabbed answer", evidence: [], confidence: "low", limitations: null } });
     mountWorkspaceRoutes();
+    const modelSelect = await screen.findByLabelText("Model");
+    fireEvent.change(modelSelect, { target: { value: "B" } });
+    expect(modelSelect).toHaveValue("B");
     fireEvent.change(screen.getByLabelText("Question"), { target: { value: "Tabbed question" } });
     fireEvent.click(screen.getByRole("button", { name: "Ask" }));
     expect(await screen.findByText("Tabbed answer")).toBeInTheDocument();
@@ -90,8 +93,15 @@ describe("analysis workspace", () => {
       fireEvent.click(within(workspaceNav).getByRole("link", { name: "Analyze" }));
       expect(screen.getByText("Tabbed question")).toBeInTheDocument();
       expect(screen.getByText("Tabbed answer")).toBeInTheDocument();
+      expect(screen.getByLabelText("Model")).toHaveValue("B");
     }
     expect(api.ask).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("tab", { name: "Flow Trace" }));
+    expect(screen.getByLabelText("Model")).toHaveValue("B");
+    fireEvent.click(screen.getByRole("tab", { name: "Codebase Q&A" }));
+    fireEvent.change(screen.getByLabelText("Question"), { target: { value: "Follow-up question" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+    await waitFor(() => expect(api.ask).toHaveBeenLastCalledWith("repo-1", "Follow-up question", "B"));
   });
 
   it("keeps prior turns visible when switching among all four analysis modes", async () => {

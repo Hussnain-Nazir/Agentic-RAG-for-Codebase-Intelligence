@@ -12,10 +12,9 @@ import { ErrorNotice } from "../../components/common/Shell";
 import type { WorkspaceContext } from "./WorkspacePage";
 
 export function AnalyzeTab() {
-  const { repositoryId, setLastRunId } = useOutletContext<WorkspaceContext>();
+  const { repositoryId, modelSlot, setModelSlot, setLastRunId } = useOutletContext<WorkspaceContext>();
   const navigate = useNavigate();
   const models = useModelsConfig();
-  const [slot, setSlot] = useState<ModelSlot>("A");
   const [mode, setMode] = useState<AnalysisMode>("ask");
   const [view, setView] = useState<AnalysisView | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -33,8 +32,8 @@ export function AnalyzeTab() {
   }, [repositoryId, setLastRunId]);
 
   useEffect(() => {
-    if (models.data && !models.data.model_a.name && models.data.model_b.name) setSlot("B");
-  }, [models.data]);
+    if (models.data && !models.data.model_a.name && models.data.model_b.name) setModelSlot("B");
+  }, [models.data, setModelSlot]);
 
   function handleResult(next: AnalysisView | null) {
     setView(next);
@@ -59,7 +58,7 @@ export function AnalyzeTab() {
   const modelDropdown = models.data ? (
     <div className="flex items-center gap-2">
       <label htmlFor="model-slot" className="text-sm text-ink-secondary">Model</label>
-      <select id="model-slot" className="input w-auto py-1.5 text-sm" value={slot} onChange={(event) => setSlot(event.target.value as ModelSlot)}>
+      <select id="model-slot" className="input w-auto py-1.5 text-sm" value={modelSlot} onChange={(event) => setModelSlot(event.target.value as ModelSlot)}>
         <option value="A" disabled={!models.data.model_a.name}>A: {models.data.model_a.name ?? "Not configured"}</option>
         <option value="B" disabled={!models.data.model_b.name}>B: {models.data.model_b.name ?? "Not configured"}</option>
       </select>
@@ -76,7 +75,7 @@ export function AnalyzeTab() {
         <AnalysisWorkspace
           key={repositoryId}
           repositoryId={repositoryId}
-          modelSlot={slot}
+          modelSlot={modelSlot}
           mode={mode}
           onModeChange={setMode}
           view={view}
