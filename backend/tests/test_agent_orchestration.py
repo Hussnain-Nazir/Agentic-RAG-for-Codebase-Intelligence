@@ -457,6 +457,8 @@ async def test_external_query_uses_web_but_ordinary_qa_does_not(
         repository.id,
         conversation.id,
     )
+    assert {item.source_type for item in strong_external.evidence_context.evidence} == {"CODE", "WEB"}
+    assert all(item.source_type != "WEB" for item in ordinary.evidence_context.evidence)
     weak_registry = registry_factory(web)
     weak_registry._tools["search_codebase"] = FixedSearchTool(
         await fixed_repository_evidence(session, repository, index, 1, 0.2)
@@ -490,24 +492,33 @@ async def test_external_query_uses_web_but_ordinary_qa_does_not(
         )
     )
     assert "search_web" not in ordinary_names
-    assert "search_web" not in strong_names
+    assert strong_names.count("search_web") == 1
     assert "search_web" in weak_names
     assert web.calls == 1
 
 
 @pytest.mark.asyncio
-async def test_web_failure_is_traced_and_reported_as_a_limitation(
-    orchestration_context,
+@pytest.mark.parametrize("outcome, tool_status, limitation", [
+    ("error", "ERROR", "Web search failed"),
+    ("timeout", "ERROR", "Web search timed out"),
+    ("empty", "OK", "no usable results"),
+])
+async def test_web_failure_or_empty_results_keep_repository_evidence_and_limitation(
+    orchestration_context, outcome: str, tool_status: str, limitation: str,
 ) -> None:
-    class FailingWebProvider:
+    class UnavailableWebProvider:
         async def search(self, query: str, max_results: int = 5):
             del query, max_results
+            if outcome == "empty":
+                return []
+            if outcome == "timeout":
+                raise TimeoutError("provider timeout details")
             raise RuntimeError("provider failure details")
 
     session, user, repository, index, conversation, registry_factory = orchestration_context
-    registry = registry_factory(FailingWebProvider())
+    registry = registry_factory(UnavailableWebProvider())
     registry._tools["search_codebase"] = FixedSearchTool(
-        await fixed_repository_evidence(session, repository, index, 1, 0.2)
+        await fixed_repository_evidence(session, repository, index, 3, 0.9)
     )
     controller = AgentController(
         session, {"A": DynamicMockProvider()}, tool_registry=registry, user_id=user.id
@@ -524,10 +535,14 @@ async def test_web_failure_is_traced_and_reported_as_a_limitation(
     )
 
     assert result.status is AgentRunStatus.OK
-    assert web_call is not None and web_call.status == "ERROR"
-    assert web_call.error == "Web search failed"
-    assert "Web search failed" in result.result["limitations"]
+    assert web_call is not None and web_call.status == tool_status
+    if outcome != "empty":
+        assert web_call.error == limitation
+    assert limitation in result.result["limitations"]
+    assert result.evidence_context.evidence
+    assert all(item.source_type == "CODE" for item in result.evidence_context.evidence)
     assert "provider failure details" not in result.result["limitations"]
+    assert "provider timeout details" not in result.result["limitations"]
 
 
 @pytest.mark.asyncio
@@ -653,7 +668,7 @@ async def test_web_search_bound_stops_after_three(orchestration_context) -> None
     session, user, repository, index, conversation, registry_factory = orchestration_context
     registry = registry_factory()
     registry._tools["search_codebase"] = FixedSearchTool(
-        await fixed_repository_evidence(session, repository, index, 1, 0.2)
+        await fixed_repository_evidence(session, repository, index, 3, 0.9)
     )
     controller = AgentController(
         session,

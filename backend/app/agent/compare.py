@@ -117,21 +117,48 @@ async def _run_slot(
 
     citation_result = validate_citations(structured, context)
     answer = RepositoryAnswer.model_validate(citation_result.response)
-    if citation_result.downgraded and not answer.evidence:
+    schema_status = "REPAIRED_VALID" if counters.repair_attempts > repair_before else "VALID"
+    grounding_failed = citation_result.downgraded and not answer.evidence
+    final_status = "INVALID_CITATIONS" if grounding_failed else schema_status
+    execution = await session.scalar(select(ModelExecution).where(
+        ModelExecution.agent_run_id == run.id,
+        ModelExecution.slot == ModelSlot(slot),
+        ModelExecution.validation_status == schema_status,
+    ))
+    if execution is None:
+        raise RuntimeError("Validated model execution trace is missing")
+    execution.schema_validation_status = schema_status
+    execution.validation_status = final_status
+    execution.citation_total = citation_result.citation_total
+    execution.citation_accepted = citation_result.citation_accepted
+    execution.citation_rejected = citation_result.citation_rejected
+    execution.citation_rejection_reasons = citation_result.citation_rejection_reasons
+    if grounding_failed:
+        execution.error = "Model answer failed grounding validation"
+    await session.flush()
+
+    diagnostics = {
+        "schema_validation_status": schema_status,
+        "citation_total": citation_result.citation_total,
+        "citation_accepted": citation_result.citation_accepted,
+        "citation_rejected": citation_result.citation_rejected,
+        "citation_rejection_reasons": citation_result.citation_rejection_reasons,
+    }
+    if grounding_failed:
         return ModelResult(
             slot=slot, model_name=provider.model_name, response=None,
             latency_ms=latency, input_tokens=input_tokens,
             output_tokens=output_tokens, validation_status="INVALID_CITATIONS",
             error="Model answer failed grounding validation",
+            **diagnostics,
         )
     return ModelResult(
         slot=slot, model_name=provider.model_name,
         response=answer.model_dump(mode="json"), latency_ms=latency,
         input_tokens=input_tokens, output_tokens=output_tokens,
-        validation_status=(
-            "REPAIRED_VALID" if counters.repair_attempts > repair_before else "VALID"
-        ),
+        validation_status=final_status,
         error=None,
+        **diagnostics,
     )
 
 

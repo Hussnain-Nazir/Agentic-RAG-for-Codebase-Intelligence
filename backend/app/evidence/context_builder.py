@@ -190,6 +190,33 @@ def _dedupe_evidence(evidence: list[Evidence], *, preserve_order: bool = False) 
     return result
 
 
+def _select_bounded_evidence(
+    combined: list[Evidence], task_type: str,
+) -> tuple[list[Evidence], int]:
+    kept: list[Evidence] = []
+    used_chars = 0
+    for item in combined[:MAX_EVIDENCE_ITEMS]:
+        item_chars = len(item.content_excerpt)
+        if used_chars + item_chars > MAX_CONTEXT_CHARS:
+            break
+        kept.append(item)
+        used_chars += item_chars
+
+    if task_type == "EXTERNAL_DOC_QUERY" and not any(
+        item.source_type == "WEB" for item in kept
+    ):
+        web_item = next((item for item in combined if item.source_type == "WEB"), None)
+        if web_item is not None and len(web_item.content_excerpt) <= MAX_CONTEXT_CHARS:
+            while kept and (
+                len(kept) >= MAX_EVIDENCE_ITEMS
+                or used_chars + len(web_item.content_excerpt) > MAX_CONTEXT_CHARS
+            ):
+                used_chars -= len(kept.pop().content_excerpt)
+            kept.append(web_item)
+            used_chars += len(web_item.content_excerpt)
+    return kept, used_chars
+
+
 class ContextBuilder:
     def build_from_evidence(
         self,
@@ -222,14 +249,7 @@ class ContextBuilder:
             ],
             preserve_order=preserve_order,
         )
-        kept: list[Evidence] = []
-        used_chars = 0
-        for item in combined[:MAX_EVIDENCE_ITEMS]:
-            item_chars = len(item.content_excerpt)
-            if used_chars + item_chars > MAX_CONTEXT_CHARS:
-                break
-            kept.append(item)
-            used_chars += item_chars
+        kept, used_chars = _select_bounded_evidence(combined, task_type_value)
         kept_memory: list[RepositoryMemoryContextItem] = []
         for item in relevant_memory:
             if used_chars + len(item.content) > MAX_CONTEXT_CHARS:
@@ -307,14 +327,7 @@ class ContextBuilder:
             ]
         )
 
-        kept: list[Evidence] = []
-        used_chars = 0
-        for item in combined[:MAX_EVIDENCE_ITEMS]:
-            item_chars = len(item.content_excerpt)
-            if used_chars + item_chars > MAX_CONTEXT_CHARS:
-                break
-            kept.append(item)
-            used_chars += item_chars
+        kept, used_chars = _select_bounded_evidence(combined, task_type_value)
 
         kept_memory: list[RepositoryMemoryContextItem] = []
         for item in relevant_memory:

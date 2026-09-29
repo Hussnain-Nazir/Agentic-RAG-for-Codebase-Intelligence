@@ -546,7 +546,7 @@ Not every request invokes an LLM — direct file/symbol/reference lookups return
 7. Observe structured tool result (validated against the tool's output schema).
 8. Decide whether more evidence is required (rule-based: e.g. flow trace needs an unresolved "next step" from the last observation; change impact needs unresolved symbol references).
 9. Perform bounded structural expansion via `get_related_files`/`find_references` if step 8 says yes.
-10. Optionally invoke `search_web` only if the task/query matches external-doc triggers (§18) and repository evidence alone is insufficient.
+10. Invoke `search_web` only if the task/query matches external-doc triggers (§18). Local repository evidence cannot establish a current external status or official-documentation claim, even when local retrieval quality is strong.
 11. Build final `EvidenceContext` via `ContextBuilder`.
 12. Invoke the user-selected model (Model A or Model B) — never both, except in `Compare Models` mode.
 13. Validate structured response against the relevant Pydantic schema.
@@ -574,12 +574,12 @@ No unbounded ReAct loop exists; exceeding a bound terminates the run with a part
 
 | Aspect | `REPOSITORY_QA` | `EXTERNAL_DOC_QUERY` |
 |---|---|---|
-| Web search | Never | At most 2 `search_web` calls (§16.4), only when repository evidence alone is insufficient (§16.3 step 10) |
+| Web search | Never | One search by default for an explicit external/current-documentation claim, bounded to at most 3 `search_web` calls (§16.4); strong local evidence does not suppress the external lookup |
 | Evidence | CODE / DOCUMENTATION | CODE / DOCUMENTATION plus WEB, kept distinguishable by `source_type` |
 | Prompt | Repository Q&A template | Repository Q&A template extended to label WEB evidence as untrusted external data (§28) |
 | Response schema | `RepositoryAnswer` | `RepositoryAnswer` (no new schema) |
 | 422 insufficient evidence | No repository evidence | No repository evidence and no web evidence |
-| Web failure | Not applicable | Degrades gracefully (§18.2): answer from repository evidence with the limitation stated in `limitations` |
+| Web failure or no usable results | Not applicable | Degrades gracefully (§18.2): answer from repository evidence with the limitation stated in `limitations` |
 | Automatic memory write | Per §19.2 | Never from WEB evidence alone (§19.2) |
 | Model calls | 1 | 1 |
 
@@ -641,6 +641,8 @@ Validation order: repository access → path normalization (reject `..`, absolut
 ### 18.2 Web Search Plugin (Mandatory, Conditional)
 
 Web search is **never** automatic for ordinary repository questions. It triggers only when the task is classified `EXTERNAL_DOC_QUERY` — i.e., the query explicitly references external/current documentation, deprecation status, or "official" comparison (matched via task-classification keywords: "deprecated", "official docs", "current version", "compare with documentation", "latest API"). An `EXTERNAL_DOC_QUERY` is submitted through the same `POST /repositories/{id}/ask` endpoint as a `REPOSITORY_QA` question and returns a `RepositoryAnswer` in which WEB evidence appears alongside CODE/DOCUMENTATION evidence (§16.5).
+
+Strong CODE/DOCUMENTATION retrieval does not answer the external/current part of an `EXTERNAL_DOC_QUERY`; the bounded web lookup still runs. When usable results are returned, the final bounded context retains at least one distinct WEB evidence item. If the provider fails, times out, or returns no usable snippet, Prism continues from repository evidence and states the limitation.
 
 ```python
 class WebSearchProvider(Protocol):

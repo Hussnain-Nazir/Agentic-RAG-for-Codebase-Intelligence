@@ -32,6 +32,7 @@ from app.llm.base import LLMResult
 from app.main import create_app
 from app.models import AgentRun, AgentRunStatus, CodeChunk, ModelExecution, Repository, RepositoryIndex, ToolCall, User
 from app.plugins.web_search.provider import WebResult
+from app.schemas.responses import RepositoryAnswer
 from app.sources.upload import UploadedRepositorySource
 from app.tools.registry import ToolRegistry
 from app.tools.schemas import EvidenceList, RepositoryQueryInput
@@ -239,6 +240,71 @@ def test_repository_qa_returns_grounded_answer_and_persisted_trace(qa_context) -
     assert len(models) == 1
     assert models[0].validation_status == "VALID"
     assert call_counts["model"] == 1
+
+
+@pytest.mark.parametrize("question, multi_file", [
+    ("How does authentication verify a password?", False),
+    (
+        "How does this application ensure that an authenticated user can only "
+        "access and modify their own items? Explain where authentication is "
+        "checked, how items are filtered for the current user, and how "
+        "unauthorized update or delete attempts are rejected, citing the "
+        "relevant files and symbols.",
+        True,
+    ),
+])
+def test_repository_qa_accepts_precise_citations_within_evidence(
+    qa_context, question: str, multi_file: bool,
+) -> None:
+    client, session_factory, repository, provider_box, _ = qa_context
+    cited_count = 0
+
+    def response_with_subranges(messages, schema):
+        nonlocal cited_count
+        assert schema is RepositoryAnswer
+        context = _context_from_messages(messages)
+        candidates = [
+            item for item in context["evidence"]
+            if item["source_type"] == "CODE"
+            and item["end_line"] > item["start_line"]
+        ]
+        distinct_files = list({item["file_path"] for item in candidates})
+        if multi_file:
+            assert len(distinct_files) >= 2
+        selected = []
+        for item in candidates:
+            if not selected or (multi_file and item["file_path"] != selected[0]["file_path"]):
+                selected.append(item)
+            if len(selected) == (2 if multi_file else 1):
+                break
+        citations = [
+            {**item, "start_line": item["start_line"] + 1,
+             "end_line": item["end_line"]}
+            for item in selected
+        ]
+        cited_count = len(citations)
+        return {
+            "answer": "Authentication and item ownership are supported by the cited code.",
+            "evidence": citations, "confidence": "high", "limitations": None,
+        }
+
+    provider_box["provider"] = MockProvider(callback=response_with_subranges)
+    api_response = client.post(
+        f"/repositories/{repository.id}/ask",
+        json={"question": question, "model_slot": "A"},
+    )
+
+    assert api_response.status_code == 200, api_response.text
+    assert len(api_response.json()["answer"]["evidence"]) == cited_count
+
+    async def execution():
+        async with session_factory() as session:
+            return await session.scalar(select(ModelExecution).where(
+                ModelExecution.agent_run_id == uuid.UUID(api_response.json()["agent_run_id"])
+            ))
+
+    row = asyncio.run(execution())
+    assert row.validation_status == "VALID"
 
 
 def test_repository_qa_none_evidence_returns_422_without_model_call(qa_context) -> None:

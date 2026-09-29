@@ -351,15 +351,17 @@ describe("analysis workspace", () => {
     vi.spyOn(api, "compareModels").mockResolvedValue({
       agent_run_id: "run-5", question: "How does login work?", evidence_context_id: "context-1",
       results: [
-        { slot: "A", model_name: "model-a", response: { answer: "Answer A", evidence: [evidence], confidence: "high", limitations: null }, latency_ms: 10, input_tokens: 20, output_tokens: 30, validation_status: "VALID", error: null },
-        { slot: "B", model_name: "model-b", response: { answer: "Answer B", evidence: [evidence], confidence: "medium", limitations: null }, latency_ms: 12, input_tokens: 22, output_tokens: 32, validation_status: "VALID", error: null },
+        { slot: "A", model_name: "model-a", response: { answer: "Answer A", evidence: [evidence], confidence: "high", limitations: null }, latency_ms: 10, input_tokens: 20, output_tokens: 30, validation_status: "VALID", error: null, schema_validation_status: "VALID", citation_total: 1, citation_accepted: 1, citation_rejected: 0, citation_rejection_reasons: {} },
+        { slot: "B", model_name: "model-b", response: null, latency_ms: 12, input_tokens: 22, output_tokens: 32, validation_status: "INVALID_CITATIONS", error: "Model answer failed grounding validation", schema_validation_status: "VALID", citation_total: 1, citation_accepted: 0, citation_rejected: 1, citation_rejection_reasons: { UNKNOWN_EVIDENCE_ID: 1 } },
       ],
     });
     mount(<AnalysisHarness />);
     fireEvent.change(screen.getByLabelText("Question"), { target: { value: "How does login work?" } });
     fireEvent.click(screen.getByRole("button", { name: "Ask & Compare" }));
     expect(await screen.findByText("Answer A")).toBeInTheDocument();
-    expect(screen.getByText("Answer B")).toBeInTheDocument();
+    expect(screen.getByText("Model answer failed grounding validation")).toBeInTheDocument();
+    expect(screen.getByText("UNKNOWN_EVIDENCE_ID: 1")).toBeInTheDocument();
+    expect(screen.getByText("Citations: 0 accepted, 1 rejected of 1")).toBeInTheDocument();
     expect(screen.getByText(/20 input tokens/)).toBeInTheDocument();
     expect(screen.queryByText(/winner|ranking|best model/i)).not.toBeInTheDocument();
   });
@@ -405,7 +407,7 @@ describe("independent panels", () => {
       ],
       model_executions: [
         { id: "model-1", slot: "A", model_name: "model-a", latency_ms: 10, input_tokens: 20, output_tokens: 30, validation_status: "VALID", error: null },
-        { id: "model-2", slot: "B", model_name: "model-b", latency_ms: 12, input_tokens: 22, output_tokens: 32, validation_status: "VALID", error: null },
+        { id: "model-2", slot: "B", model_name: "model-b", latency_ms: 12, input_tokens: 22, output_tokens: 32, validation_status: "INVALID_CITATIONS", schema_validation_status: "VALID", citation_total: 1, citation_accepted: 0, citation_rejected: 1, citation_rejection_reasons: { FILE_PATH_MISMATCH: 1 }, error: "Model answer failed grounding validation" },
       ],
     });
     mount(<AgentTrace runId="run-1" />);
@@ -417,6 +419,9 @@ describe("independent panels", () => {
     const modelDetails = screen.getAllByText(/Model [AB]: model-/).map((item) => item.textContent);
     expect(modelDetails[0]).toContain("Model A: model-a");
     expect(modelDetails[1]).toContain("Model B: model-b");
+    expect(screen.getByText("Schema: VALID · Grounding: INVALID_CITATIONS")).toBeInTheDocument();
+    expect(screen.getByText("Citations: 0 accepted, 1 rejected of 1")).toBeInTheDocument();
+    expect(screen.getByText("FILE_PATH_MISMATCH: 1")).toBeInTheDocument();
   });
 
   it("keeps tree and evidence loading and empty states separate", async () => {

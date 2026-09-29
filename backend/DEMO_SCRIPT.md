@@ -35,7 +35,7 @@ This follows `PRISM_SPEC.md` section 35 against `backend/tests/fixtures/demo_rep
 ## 5. Conditional web-search plugin
 
 1. Return to **Analyze > Codebase Q&A**. Ask a repository-related question that needs external status, for example: "Is the JWT library used by this repository deprecated according to current official docs? Compare that current guidance with the stored login code." This goes through the same `POST /repositories/{id}/ask` endpoint. The backend classifies explicit current/official-documentation wording as `EXTERNAL_DOC_QUERY`.
-2. Open **Agent Trace** and confirm an actual `search_web` call. Web search runs only when the repository-only evidence is insufficient; if this question has strong repository evidence and no search occurs, use a narrower current external API or deprecation question, and do not claim the plugin ran until the trace shows it. Show a WEB-tagged evidence chip with its external URL separately from CODE evidence. A provider error should appear as a limitation, not as a fabricated web citation.
+2. Open **Agent Trace** and confirm an actual `search_web` call. An explicit external/current-documentation question invokes the bounded search even when local repository evidence is strong. Show a WEB-tagged evidence chip with its external URL separately from CODE evidence. A provider error, timeout, or no usable result should appear as a limitation, not as a fabricated web citation.
 3. Ask an ordinary repository-only question through the same Ask tab, such as "What does `create_access_token` do in this repository?" Verify its trace has no `search_web` call.
 
 ## 6. Memory

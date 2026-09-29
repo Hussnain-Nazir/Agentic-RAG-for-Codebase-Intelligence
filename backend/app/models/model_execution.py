@@ -2,7 +2,8 @@ import enum
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Enum, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import JSON, Enum, ForeignKey, Index, Integer, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -32,6 +33,13 @@ class ModelExecution(Base):
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=True)
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=True)
     validation_status: Mapped[str] = mapped_column(String(64), nullable=False)
+    schema_validation_status: Mapped[str] = mapped_column(String(64), nullable=True)
+    citation_total: Mapped[int] = mapped_column(Integer, nullable=True)
+    citation_accepted: Mapped[int] = mapped_column(Integer, nullable=True)
+    citation_rejected: Mapped[int] = mapped_column(Integer, nullable=True)
+    citation_rejection_reasons: Mapped[dict[str, int]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True
+    )
     error: Mapped[str] = mapped_column(Text, nullable=True)
 
     agent_run: Mapped["AgentRun"] = relationship(back_populates="model_executions")

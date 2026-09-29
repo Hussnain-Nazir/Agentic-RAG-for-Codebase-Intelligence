@@ -109,6 +109,9 @@ export interface ModelResult {
   slot: ModelSlot; model_name: string; response: RepositoryAnswer | null;
   latency_ms: number; input_tokens: number | null; output_tokens: number | null;
   validation_status: string; error: string | null;
+  schema_validation_status?: string | null;
+  citation_total?: number | null; citation_accepted?: number | null; citation_rejected?: number | null;
+  citation_rejection_reasons?: Record<string, number> | null;
 }
 export interface ModelComparisonResponse {
   agent_run_id: string; question: string; evidence_context_id: string; results: ModelResult[];
@@ -141,6 +144,9 @@ export interface ModelExecutionDetail {
   id: string; slot: ModelSlot; model_name: string; latency_ms: number;
   input_tokens: number | null; output_tokens: number | null;
   validation_status: string; error: string | null;
+  schema_validation_status?: string | null;
+  citation_total?: number | null; citation_accepted?: number | null; citation_rejected?: number | null;
+  citation_rejection_reasons?: Record<string, number> | null;
 }
 export interface AgentTrace {
   run: AgentRunDetail; tool_calls: ToolCallDetail[]; model_executions: ModelExecutionDetail[];

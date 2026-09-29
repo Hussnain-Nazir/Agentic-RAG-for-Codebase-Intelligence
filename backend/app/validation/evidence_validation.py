@@ -1,7 +1,8 @@
 import uuid
+from collections import Counter
 from typing import Any, Generic, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.evidence.models import Evidence, EvidenceContext
 from app.schemas.responses import (
@@ -17,6 +18,10 @@ class ValidationResult(BaseModel, Generic[ResponseT]):
     response: ResponseT
     downgraded: bool
     removed_citations: list[str]
+    citation_total: int = 0
+    citation_accepted: int = 0
+    citation_rejected: int = 0
+    citation_rejection_reasons: dict[str, int] = Field(default_factory=dict)
 
 
 def _lower_confidence(value: str) -> str:
@@ -40,11 +45,11 @@ def _file_counts(context: EvidenceContext) -> dict[str, int]:
     counts = dict(context.file_line_counts)
     for item in context.evidence:
         if item.file_path and item.end_line is not None:
-            counts[item.file_path] = max(counts.get(item.file_path, 0), item.end_line)
+            counts.setdefault(item.file_path, item.end_line)
     return counts
 
 
-def _citation_valid(
+def _citation_rejection_reason(
     evidence_id: uuid.UUID,
     *,
     cited_file: str | None,
@@ -55,32 +60,32 @@ def _citation_valid(
     canonical: dict[uuid.UUID, Evidence],
     context: EvidenceContext,
     file_counts: dict[str, int],
-) -> bool:
+) -> str | None:
     # 1. The evidence ID must come from the exact context sent to the model.
     original = canonical.get(evidence_id)
     if original is None:
-        return False
+        return "UNKNOWN_EVIDENCE_ID"
 
     # 2. The cited path must exist in the current index representation.
     file_path = cited_file if cited_file is not None else original.file_path
     if original.source_type != "WEB":
         if not file_path or file_path not in file_counts:
-            return False
+            return "FILE_PATH_MISMATCH"
         if original.file_path != file_path:
-            return False
+            return "FILE_PATH_MISMATCH"
 
-    # 3. Line ranges must be real and remain within five lines of the excerpt.
+    # 3. A cited range may narrow the excerpt, but cannot claim lines outside it.
     if original.source_type != "WEB":
         start = cited_start if cited_start is not None else original.start_line
         end = cited_end if cited_end is not None else original.end_line
         if start is None or end is None or start < 1 or end < start:
-            return False
+            return "LINE_RANGE_MISMATCH"
         if end > file_counts[file_path]:
-            return False
+            return "LINE_RANGE_MISMATCH"
         if original.start_line is None or original.end_line is None:
-            return False
-        if abs(start - original.start_line) > 5 or abs(end - original.end_line) > 5:
-            return False
+            return "LINE_RANGE_MISMATCH"
+        if start < original.start_line or end > original.end_line:
+            return "LINE_RANGE_MISMATCH"
 
     # 4. Repository and index provenance must match the current context.
     current_index = _context_index(context)
@@ -88,14 +93,14 @@ def _citation_valid(
         cited_repository_index_id is not None
         and cited_repository_index_id != original.repository_index_id
     ):
-        return False
+        return "INDEX_VERSION_MISMATCH"
     if cited_repository_id is not None and cited_repository_id != original.repository_id:
-        return False
+        return "REPOSITORY_MISMATCH"
     if current_index is not None and original.repository_index_id != current_index:
-        return False
+        return "INDEX_VERSION_MISMATCH"
     if context.repository_id is not None and original.repository_id != context.repository_id:
-        return False
-    return True
+        return "REPOSITORY_MISMATCH"
+    return None
 
 
 def validate_citations(
@@ -107,10 +112,14 @@ def validate_citations(
     data = response.model_dump()
     removed: list[str] = []
     kept_ids: set[uuid.UUID] = set()
+    citation_total = 0
+    citation_accepted = 0
+    rejection_reasons: Counter[str] = Counter()
 
     for citation in data.get("evidence", []):
         evidence_id = uuid.UUID(str(citation["evidence_id"]))
-        if _citation_valid(
+        citation_total += 1
+        reason = _citation_rejection_reason(
             evidence_id,
             cited_file=citation.get("file_path"),
             cited_start=citation.get("start_line"),
@@ -122,17 +131,21 @@ def validate_citations(
             canonical=canonical,
             context=evidence_context,
             file_counts=file_counts,
-        ):
+        )
+        if reason is None:
             kept_ids.add(evidence_id)
+            citation_accepted += 1
         else:
             removed.append(str(evidence_id))
+            rejection_reasons[reason] += 1
 
     if isinstance(response, FlowTraceResponse):
         for step in data["steps"]:
             valid_ids: list[uuid.UUID] = []
             for raw_id in step["evidence_ids"]:
                 evidence_id = uuid.UUID(str(raw_id))
-                if _citation_valid(
+                citation_total += 1
+                reason = _citation_rejection_reason(
                     evidence_id,
                     cited_file=step["file"],
                     cited_start=step["start_line"],
@@ -142,11 +155,14 @@ def validate_citations(
                     canonical=canonical,
                     context=evidence_context,
                     file_counts=file_counts,
-                ):
+                )
+                if reason is None:
                     valid_ids.append(evidence_id)
                     kept_ids.add(evidence_id)
+                    citation_accepted += 1
                 else:
                     removed.append(str(evidence_id))
+                    rejection_reasons[reason] += 1
             if len(valid_ids) != len(step["evidence_ids"]):
                 step["unresolved"] = True
             step["evidence_ids"] = valid_ids
@@ -157,7 +173,8 @@ def validate_citations(
                 valid_ids: list[uuid.UUID] = []
                 for raw_id in item["evidence_ids"]:
                     evidence_id = uuid.UUID(str(raw_id))
-                    if _citation_valid(
+                    citation_total += 1
+                    reason = _citation_rejection_reason(
                         evidence_id,
                         cited_file=item["file"],
                         cited_start=None,
@@ -167,11 +184,14 @@ def validate_citations(
                         canonical=canonical,
                         context=evidence_context,
                         file_counts=file_counts,
-                    ):
+                    )
+                    if reason is None:
                         valid_ids.append(evidence_id)
                         kept_ids.add(evidence_id)
+                        citation_accepted += 1
                     else:
                         removed.append(str(evidence_id))
+                        rejection_reasons[reason] += 1
                 if len(valid_ids) != len(item["evidence_ids"]):
                     item["confidence"] = _lower_confidence(item["confidence"])
                 item["evidence_ids"] = valid_ids
@@ -196,4 +216,8 @@ def validate_citations(
         response=validated,
         downgraded=bool(unique_removed),
         removed_citations=unique_removed,
+        citation_total=citation_total,
+        citation_accepted=citation_accepted,
+        citation_rejected=citation_total - citation_accepted,
+        citation_rejection_reasons=dict(rejection_reasons),
     )

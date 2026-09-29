@@ -233,6 +233,27 @@ def test_evidence_item_limit_is_sixteen() -> None:
     assert len(context.evidence) == 16
 
 
+def test_external_doc_context_reserves_web_evidence_with_full_local_candidate_set() -> None:
+    candidates = [
+        make_candidate(number, score=1.0 - number * 0.01,
+                       content=f"def useful_{number}(): return {number}")
+        for number in range(20)
+    ]
+    context = ContextBuilder().build(
+        "Compare implementation with official docs", "EXTERNAL_DOC_QUERY",
+        [], candidates, [], [WebEvidenceItem(
+            title="Official documentation", url="https://docs.example.test/current",
+            snippet="Current documented behavior.", source_domain="docs.example.test",
+        )],
+    )
+
+    assert len(context.evidence) == MAX_EVIDENCE_ITEMS
+    assert context.evidence[0].source_type == "CODE"
+    assert context.evidence[-1].source_type == "WEB"
+    assert context.evidence[-1].external_source_metadata["url"] == "https://docs.example.test/current"
+    assert context.estimated_tokens <= MAX_CONTEXT_TOKENS
+
+
 def test_structural_relationship_metadata_is_preserved() -> None:
     candidate = make_candidate(
         1,

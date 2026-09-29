@@ -250,6 +250,8 @@ def test_nonexistent_evidence_id_is_removed_and_downgraded() -> None:
     assert result.response.evidence == []
     assert result.response.confidence == "medium"
     assert result.removed_citations == [str(invented.evidence_id)]
+    assert (result.citation_total, result.citation_accepted, result.citation_rejected) == (1, 0, 1)
+    assert result.citation_rejection_reasons == {"UNKNOWN_EVIDENCE_ID": 1}
 
 
 def test_line_range_more_than_five_lines_outside_excerpt_is_removed() -> None:
@@ -267,6 +269,52 @@ def test_line_range_more_than_five_lines_outside_excerpt_is_removed() -> None:
     assert result.downgraded is True
     assert result.response.evidence == []
     assert result.removed_citations == [str(canonical.evidence_id)]
+    assert result.citation_rejection_reasons == {"LINE_RANGE_MISMATCH": 1}
+
+
+@pytest.mark.parametrize("ranges, accepted", [
+    ([(1, 55)], True),
+    ([(24, 28)], True),
+    ([(2, 5), (24, 28)], True),
+    ([(24, 56)], False),
+    ([(56, 60)], False),
+    ([(28, 24)], False),
+    ([(0, 5)], False),
+    ([(54, 101)], False),
+])
+def test_citation_range_must_be_within_canonical_evidence_and_file(
+    ranges: list[tuple[int, int]], accepted: bool,
+) -> None:
+    canonical = make_evidence(start_line=1, end_line=55)
+    citations = [
+        canonical.model_copy(update={"start_line": start, "end_line": end})
+        for start, end in ranges
+    ]
+    response = RepositoryAnswer(
+        answer="Evidence-backed answer", evidence=citations,
+        confidence="high", limitations=None,
+    )
+
+    result = validate_citations(response, make_context([canonical]))
+
+    assert result.citation_total == len(ranges)
+    assert result.citation_accepted == (len(ranges) if accepted else 0)
+    assert result.citation_rejection_reasons == (
+        {} if accepted else {"LINE_RANGE_MISMATCH": len(ranges)}
+    )
+    assert result.downgraded is not accepted
+
+
+def test_explicit_file_count_limits_citation_even_when_evidence_extends_further() -> None:
+    canonical = make_evidence(start_line=1, end_line=110)
+    cited = canonical.model_copy(update={"start_line": 101, "end_line": 105})
+    response = RepositoryAnswer(
+        answer="Claim", evidence=[cited], confidence="high", limitations=None,
+    )
+
+    result = validate_citations(response, make_context([canonical]))
+
+    assert result.citation_rejection_reasons == {"LINE_RANGE_MISMATCH": 1}
 
 
 def test_stale_repository_index_evidence_is_rejected() -> None:
@@ -294,3 +342,34 @@ def test_stale_repository_index_evidence_is_rejected() -> None:
     assert result.downgraded is True
     assert result.response.evidence == []
     assert result.removed_citations == [str(stale.evidence_id)]
+    assert result.citation_rejection_reasons == {"INDEX_VERSION_MISMATCH": 1}
+
+
+@pytest.mark.parametrize("changed, reason", [
+    ({"file_path": "missing.py"}, "FILE_PATH_MISMATCH"),
+    ({"repository_id": uuid.UUID(int=3)}, "REPOSITORY_MISMATCH"),
+])
+def test_citation_diagnostics_classify_rejection_without_changing_downgrade(changed, reason) -> None:
+    canonical = make_evidence(repository_id=uuid.UUID(int=1), repository_index_id=uuid.UUID(int=2))
+    cited = canonical.model_copy(update=changed)
+    response = RepositoryAnswer(answer="Claim", evidence=[cited], confidence="high", limitations=None)
+
+    result = validate_citations(response, make_context([canonical]))
+
+    assert result.downgraded is True
+    assert result.response.evidence == []
+    assert result.citation_rejection_reasons == {reason: 1}
+
+
+def test_citation_diagnostics_count_valid_and_rejected_citations() -> None:
+    canonical = make_evidence()
+    invented = canonical.model_copy(update={"evidence_id": uuid.uuid4()})
+    response = RepositoryAnswer(
+        answer="Claim", evidence=[canonical, invented], confidence="high", limitations=None,
+    )
+
+    result = validate_citations(response, make_context([canonical]))
+
+    assert (result.citation_total, result.citation_accepted, result.citation_rejected) == (2, 1, 1)
+    assert result.citation_rejection_reasons == {"UNKNOWN_EVIDENCE_ID": 1}
+    assert [item.evidence_id for item in result.response.evidence] == [canonical.evidence_id]

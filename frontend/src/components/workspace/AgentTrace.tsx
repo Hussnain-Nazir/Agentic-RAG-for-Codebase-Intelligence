@@ -79,6 +79,11 @@ export function AgentTrace({ runId }: { runId: string | null }) {
                 <div key={execution.id} className="rounded-md border border-border-subtle bg-surface-1 p-3 font-mono text-xs">
                   <p className="font-sans text-sm text-ink-primary">Model {execution.slot}: {execution.model_name} · {execution.latency_ms} ms · {execution.validation_status}</p>
                   <p className="mt-1 text-ink-muted">Tokens: {execution.input_tokens ?? "?"} input / {execution.output_tokens ?? "?"} output</p>
+                  {execution.schema_validation_status && <p className="mt-1 text-ink-secondary">Schema: {execution.schema_validation_status} · Grounding: {execution.validation_status}</p>}
+                  {execution.citation_total != null && <p className="mt-1 text-ink-secondary">Citations: {execution.citation_accepted} accepted, {execution.citation_rejected} rejected of {execution.citation_total}</p>}
+                  {Object.entries(execution.citation_rejection_reasons ?? {}).map(([reason, count]) => (
+                    <p key={reason} className="mt-1 text-warning">{reason}: {count}</p>
+                  ))}
                   {execution.error && <p className="mt-1 text-danger">{execution.error}</p>}
                 </div>
               ))}

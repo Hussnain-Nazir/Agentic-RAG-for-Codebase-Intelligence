@@ -52,6 +52,11 @@ class ModelExecutionDetail(BaseModel):
     output_tokens: int | None
     validation_status: str
     error: str | None
+    schema_validation_status: str | None = None
+    citation_total: int | None = None
+    citation_accepted: int | None = None
+    citation_rejected: int | None = None
+    citation_rejection_reasons: dict[str, int] | None = None
 
 
 class AgentTrace(BaseModel):

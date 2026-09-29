@@ -795,21 +795,12 @@ class AgentController:
                         trusted_metadata["supported_subquestions"] = supported_subquestions
                         trusted_metadata["unsupported_subquestions"] = unsupported_subquestions
 
-            repository_only_context = self._context_builder.build_from_evidence(
-                task,
-                task_type,
-                repository_memory,
-                [*repository_evidence, *structural_evidence],
-                None,
-            )
             requested_web = (
                 1
                 if self._plan.web_searches is None
                 and task_type is TaskType.EXTERNAL_DOC_QUERY
                 else max(self._plan.web_searches or 0, 0)
             )
-            if repository_only_context.quality is EvidenceQuality.STRONG:
-                requested_web = 0
             web_evidence: list[WebEvidenceItem] = []
             web_search_error: str | None = None
             for _ in range(requested_web):
@@ -844,8 +835,16 @@ class AgentController:
                             else None
                         ),
                     )
-                    for item in web_result.results
+                    for item in web_result.results if item.snippet.strip()
                 )
+
+            web_search_limitation = (
+                f"External documentation search failed: {web_search_error}."
+                if web_search_error else
+                "External documentation search returned no usable results."
+                if task_type is TaskType.EXTERNAL_DOC_QUERY
+                and requested_web and not web_evidence else None
+            )
 
             context = self._context_builder.build_from_evidence(
                 task,
@@ -912,8 +911,8 @@ class AgentController:
                     )
                 else:
                     limitation = "No evidence was available for repository-specific claims."
-                    if web_search_error:
-                        limitation += f" External documentation search failed: {web_search_error}."
+                    if web_search_limitation:
+                        limitation += f" {web_search_limitation}"
                     conservative = RepositoryAnswer(
                         answer="Insufficient repository evidence was found.",
                         evidence=[],
@@ -960,8 +959,8 @@ class AgentController:
                 )
             citation_result = validate_citations(structured, context)
             structured = citation_result.response
-            if web_search_error and isinstance(structured, RepositoryAnswer):
-                limitation = f"External documentation search failed: {web_search_error}."
+            if web_search_limitation and isinstance(structured, RepositoryAnswer):
+                limitation = web_search_limitation
                 structured.limitations = (
                     f"{structured.limitations} {limitation}"
                     if structured.limitations else limitation

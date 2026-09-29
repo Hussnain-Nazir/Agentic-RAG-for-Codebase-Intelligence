@@ -221,6 +221,10 @@ function ResultContent({ view, onOpenEvidence }: { view: AnalysisView; onOpenEvi
           <EvidenceChips evidence={result.response?.evidence ?? []} onOpen={onOpenEvidence} />
           <footer className="mt-5 border-t border-border-subtle pt-3 text-xs text-ink-muted">
             {result.latency_ms} ms · {result.input_tokens ?? "?"} input tokens · {result.output_tokens ?? "?"} output tokens · {result.validation_status}
+            {result.citation_total != null && <p className="mt-1">Citations: {result.citation_accepted} accepted, {result.citation_rejected} rejected of {result.citation_total}</p>}
+            {Object.entries(result.citation_rejection_reasons ?? {}).map(([reason, count]) => (
+              <p key={reason} className="mt-1 text-warning">{reason}: {count}</p>
+            ))}
           </footer>
         </article>
       ))}
