@@ -11,6 +11,7 @@ import type {
   ArchitectureResponse, ChangeImpactResponse, Evidence, FlowTraceResponse,
   ModelComparisonResponse, ModelSlot, RepositoryAnswer,
 } from "../../api/types";
+import { PrismLogo } from "../common/PrismLogo";
 import { ErrorNotice } from "../common/Shell";
 import { externalSource } from "./externalSource";
 
@@ -339,25 +340,38 @@ export function AnalysisWorkspace({ repositoryId, modelSlot, mode, onModeChange,
             </div>
           )}
 
-          <div className="space-y-8">
+          <div className="space-y-10">
             {history.map((turn) => (
-              <div key={turn.id} data-testid="conversation-turn" className="animate-fade-in">
-                {turn.mode !== "architecture" && (
-                  <p className="mb-3 text-[15px] font-medium text-ink-primary">{turn.question}</p>
-                )}
-                {turn.pending && <div className="mt-6 flex items-center gap-2 text-sm text-ink-secondary"><span className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-accent" />Gathering evidence and validating the result...</div>}
-                {turn.error && <div className="mt-3"><ErrorNotice message={turn.error} /></div>}
-                {turn.view && <ResultContent view={turn.view} onOpenEvidence={onOpenEvidence} />}
-                {turn.view && canSave && turn === history[history.length - 1] && (
-                  <div className="mt-4 border-t border-border-subtle pt-4">
-                    <button type="button" className="button-secondary" disabled={save.isPending || save.isSuccess || evidenceIds.length === 0} onClick={() => void saveFinding()}>
-                      <Save size={14} strokeWidth={1.75} />
-                      {save.isSuccess ? "Finding saved" : save.isPending ? "Saving..." : "Save Finding"}
-                    </button>
-                    {evidenceIds.length === 0 && <p className="mt-2 text-xs text-ink-muted">Saving requires current code evidence.</p>}
-                    {save.isError && <div className="mt-3"><ErrorNotice message={save.error.message} /></div>}
+              <div key={turn.id} data-testid="conversation-turn" className="min-w-0 space-y-5 animate-fade-in">
+                <div className="flex justify-end">
+                  <div className="flex min-w-0 max-w-[85%] flex-col items-end gap-1.5 sm:max-w-[75%]">
+                    <span className="text-xs font-medium text-ink-muted">You</span>
+                    <p className="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] rounded-xl rounded-br-sm bg-accent px-4 py-3 text-sm leading-relaxed text-white shadow-panel">
+                      {turn.mode === "architecture" ? "Explain architecture" : turn.question}
+                    </p>
                   </div>
-                )}
+                </div>
+                <div className="min-w-0">
+                  <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-ink-secondary">
+                    <PrismLogo size={24} className="shrink-0" />
+                    PRISM
+                  </div>
+                  <div className="min-w-0 border-l border-border-subtle pl-4 sm:pl-5">
+                    {turn.pending && <div className="flex items-center gap-2 text-sm text-ink-secondary"><span className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-accent" />Gathering evidence and validating the result...</div>}
+                    {turn.error && <ErrorNotice message={turn.error} />}
+                    {turn.view && <ResultContent view={turn.view} onOpenEvidence={onOpenEvidence} />}
+                    {turn.view && canSave && turn === history[history.length - 1] && (
+                      <div className="mt-4 border-t border-border-subtle pt-4">
+                        <button type="button" className="button-secondary" disabled={save.isPending || save.isSuccess || evidenceIds.length === 0} onClick={() => void saveFinding()}>
+                          <Save size={14} strokeWidth={1.75} />
+                          {save.isSuccess ? "Finding saved" : save.isPending ? "Saving..." : "Save Finding"}
+                        </button>
+                        {evidenceIds.length === 0 && <p className="mt-2 text-xs text-ink-muted">Saving requires current code evidence.</p>}
+                        {save.isError && <div className="mt-3"><ErrorNotice message={save.error.message} /></div>}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             ))}
           </div>
