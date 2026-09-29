@@ -164,7 +164,7 @@ def test_change_impact_separates_definition_and_consumers(qa_context) -> None:
             return tools, models
 
     tools, models = asyncio.run(persisted())
-    assert len(tools) <= 8
+    assert len(tools) <= 12
     assert {item.tool_name for item in tools} >= {
         "search_codebase", "find_symbol", "find_references", "get_related_files"
     }

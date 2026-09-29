@@ -187,9 +187,9 @@ def test_actual_model_payload_contains_only_bounded_context_for_large_repository
     def response(messages, schema):
         context = _context_from_messages(messages)
         observed.append(context)
-        assert 0 < len(context["evidence"]) <= 12
-        assert context["estimated_tokens"] <= 6000
-        assert sum(len(item["content_excerpt"]) for item in context["evidence"]) <= 24000
+        assert 0 < len(context["evidence"]) <= 16
+        assert context["estimated_tokens"] <= 8000
+        assert sum(len(item["content_excerpt"]) for item in context["evidence"]) <= 32000
         payload = "\n".join(item.content for item in messages)
         assert all(content.decode() not in payload for content in files.values())
         assert all("[UNTRUSTED REPOSITORY EVIDENCE]" not in item.content for item in messages if item.role == "system")

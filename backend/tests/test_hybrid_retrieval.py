@@ -553,7 +553,7 @@ async def test_structural_expansion_pulls_relationship_and_caps_additions(
             [seed], max_per_seed=20, max_total=15, session=session
         )
 
-        assert len(default_result) == 3
+        assert len(default_result) == 4
         assert default_result[1].chunk.id in {item.id for item in related_chunks}
         assert sum(item.signal == "structural" for item in capped_result) == 15
         assert len(capped_result) == 16

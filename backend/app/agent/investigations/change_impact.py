@@ -128,7 +128,13 @@ def _preferred_references(
             reference.relationship_kind, 0
         ) > RELATIONSHIP_PRIORITY.get(previous.relationship_kind, 0):
             preferred[key] = reference
-    return preferred
+    files_with_named_consumers = {
+        file for file, symbol in preferred if symbol != "<module>"
+    }
+    return {
+        key: reference for key, reference in preferred.items()
+        if not (key[1] == "<module>" and key[0] in files_with_named_consumers)
+    }
 
 
 async def investigate_change_impact(
@@ -201,6 +207,28 @@ async def investigate_change_impact(
         preferred_references = _preferred_references(
             list(getattr(references, "root", [])), set(state.directly_affected)
         )
+        if preferred_references and not any(
+            _supporting(state.evidence, reference.file, reference.symbol)
+            for reference in preferred_references.values()
+        ):
+            missing_consumers = sorted(
+                preferred_references.values(),
+                key=lambda reference: (
+                    -RELATIONSHIP_PRIORITY.get(reference.relationship_kind, 0),
+                    reference.file, reference.symbol,
+                ),
+            )
+            for reference in missing_consumers[:4]:
+                consumer = await execute_tool(
+                    "get_related_files",
+                    RelatedFilesInput(
+                        repository_id=repository_id,
+                        symbol_name_or_chunk_id=reference.symbol,
+                        source_file_path=reference.file,
+                        include_seed=True,
+                    ),
+                )
+                state.add_evidence(list(getattr(consumer, "root", [])))
         for key, reference in preferred_references.items():
             ids = _supporting(state.evidence, reference.file, reference.symbol)
             if ids:
@@ -304,6 +332,13 @@ async def investigate_change_impact(
                     reason="Stored source uses a named field or relationship in the requested change.",
                     evidence_ids=[item.evidence_id],
                 )
+        state.likely_indirectly_affected = {
+            key: candidate for key, candidate in state.likely_indirectly_affected.items()
+            if not any(
+                direct_file == key[0] and direct_symbol.startswith(key[1] + ".")
+                for direct_file, direct_symbol in state.directly_affected
+            )
+        }
         break
     return state
 

@@ -32,7 +32,7 @@ an expected definition is not reached.
 
 Current measured summary: 26 questions, Hit@12 100%, response expected
 file/symbol recall 100%, citation validity 100%, grounded responses 100%,
-invalid references 0%, ordered flow-step recall 93.33%, direct-impact recall
+invalid references 0%, ordered flow-step recall 100%, direct-impact recall
 100% and precision 96.67%, indirect-impact recall and precision 100%, and
 nested architecture location checks 100%. The benchmark now covers the full
 login question, multi-part ownership Q&A, and multiple-organization impact.

@@ -477,7 +477,7 @@ def test_repository_qa_failed_schema_repair_returns_422(qa_context) -> None:
     detail = response.json()["detail"]
     assert detail["message"] == "The model output failed structured validation"
     assert "answer" not in detail
-    assert provider.calls == 2
+    assert provider.calls == 3
 
     async def persisted() -> tuple[AgentRun, list[ModelExecution]]:
         async with session_factory() as session:
@@ -493,7 +493,7 @@ def test_repository_qa_failed_schema_repair_returns_422(qa_context) -> None:
 
     run, models = asyncio.run(persisted())
     assert run.status is AgentRunStatus.INVALID_OUTPUT
-    assert len(models) == 2
+    assert len(models) == 3
     assert all(model.validation_status == "INVALID" for model in models)
 
 
@@ -608,7 +608,7 @@ def test_external_doc_question_returns_tagged_sources_and_bounded_run(qa_context
     run, tools, models = asyncio.run(persisted())
     assert run.task_type == TaskType.EXTERNAL_DOC_QUERY.value
     assert sum(item.tool_name == "search_web" for item in tools) == 1
-    assert len(tools) <= 8 and len(models) == 1
+    assert len(tools) <= 12 and len(models) == 1
 
 
 def test_file_and_symbol_external_doc_question_uses_ask(qa_context) -> None:

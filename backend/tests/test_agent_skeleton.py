@@ -37,7 +37,7 @@ async def database_session() -> AsyncIterator[AsyncSession]:
 
 def test_agent_controller_skeleton_was_replaced_by_bounded_controller() -> None:
     assert AgentController.__module__ == "app.agent.controller"
-    assert MAX_TOOL_ITERATIONS == 8
+    assert MAX_TOOL_ITERATIONS == 12
 
 
 class FakeInput(BaseModel):

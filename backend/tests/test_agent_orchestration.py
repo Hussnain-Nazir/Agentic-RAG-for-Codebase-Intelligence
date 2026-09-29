@@ -531,7 +531,7 @@ async def test_web_failure_is_traced_and_reported_as_a_limitation(
 
 
 @pytest.mark.asyncio
-async def test_tool_iteration_bound_stops_at_eight(orchestration_context) -> None:
+async def test_tool_iteration_bound_stops_at_twelve(orchestration_context) -> None:
     session, user, repository, _, conversation, registry_factory = orchestration_context
     provider = DynamicMockProvider()
     controller = AgentController(
@@ -539,7 +539,7 @@ async def test_tool_iteration_bound_stops_at_eight(orchestration_context) -> Non
         {"A": provider},
         tool_registry=registry_factory(),
         user_id=user.id,
-        execution_plan=ExecutionPlan(extra_tool_iterations=9),
+        execution_plan=ExecutionPlan(extra_tool_iterations=13),
     )
 
     result = await controller.run(
@@ -552,19 +552,19 @@ async def test_tool_iteration_bound_stops_at_eight(orchestration_context) -> Non
         )
     )
     assert result.status is AgentRunStatus.BOUNDS_EXCEEDED
-    assert len(calls) == 8
+    assert len(calls) == 12
     assert provider.calls == 0
 
 
 @pytest.mark.asyncio
-async def test_structural_round_bound_stops_after_three(orchestration_context) -> None:
+async def test_structural_round_bound_stops_after_five(orchestration_context) -> None:
     session, user, repository, _, conversation, registry_factory = orchestration_context
     controller = AgentController(
         session,
         {"A": DynamicMockProvider()},
         tool_registry=registry_factory(),
         user_id=user.id,
-        execution_plan=ExecutionPlan(structural_expansion_rounds=4),
+        execution_plan=ExecutionPlan(structural_expansion_rounds=6),
     )
 
     result = await controller.run(
@@ -582,8 +582,8 @@ async def test_structural_round_bound_stops_after_three(orchestration_context) -
         )
     )
     assert result.status is AgentRunStatus.BOUNDS_EXCEEDED
-    assert len(names) <= 8
-    assert 1 <= names.count("get_related_files") <= 3
+    assert len(names) <= 12
+    assert 1 <= names.count("get_related_files") <= 5
 
 
 class TooManyRelatedTool:
@@ -619,13 +619,13 @@ class TooManyRelatedTool:
                     },
                     external_source_metadata=None,
                 )
-                for number in range(16)
+                for number in range(25)
             ]
         )
 
 
 @pytest.mark.asyncio
-async def test_structural_chunk_bound_stops_at_fifteen(orchestration_context) -> None:
+async def test_structural_chunk_bound_stops_at_twenty_four(orchestration_context) -> None:
     session, user, repository, index, conversation, registry_factory = orchestration_context
     registry = registry_factory()
     registry._tools["get_related_files"] = TooManyRelatedTool(repository.id, index.id)
@@ -645,11 +645,11 @@ async def test_structural_chunk_bound_stops_at_fifteen(orchestration_context) ->
     )
 
     assert result.status is AgentRunStatus.BOUNDS_EXCEEDED
-    assert len(result.evidence_context.evidence) <= 12
+    assert len(result.evidence_context.evidence) <= 16
 
 
 @pytest.mark.asyncio
-async def test_web_search_bound_stops_after_two(orchestration_context) -> None:
+async def test_web_search_bound_stops_after_three(orchestration_context) -> None:
     session, user, repository, index, conversation, registry_factory = orchestration_context
     registry = registry_factory()
     registry._tools["search_codebase"] = FixedSearchTool(
@@ -660,7 +660,7 @@ async def test_web_search_bound_stops_after_two(orchestration_context) -> None:
         {"A": DynamicMockProvider()},
         tool_registry=registry,
         user_id=user.id,
-        execution_plan=ExecutionPlan(web_searches=3),
+        execution_plan=ExecutionPlan(web_searches=4),
     )
 
     result = await controller.run(
@@ -678,7 +678,7 @@ async def test_web_search_bound_stops_after_two(orchestration_context) -> None:
         )
     )
     assert result.status is AgentRunStatus.BOUNDS_EXCEEDED
-    assert names.count("search_web") == 2
+    assert names.count("search_web") == 3
 
 
 @pytest.mark.asyncio
@@ -704,7 +704,7 @@ async def test_model_call_bound_never_invokes_second_model(orchestration_context
 
 
 @pytest.mark.asyncio
-async def test_malformed_output_gets_exactly_one_repair(orchestration_context) -> None:
+async def test_malformed_output_gets_one_successful_repair(orchestration_context) -> None:
     session, user, repository, _, conversation, registry_factory = orchestration_context
     provider = DynamicMockProvider(malformed_first=True)
     controller = AgentController(
@@ -767,7 +767,7 @@ async def test_failed_repair_keeps_returned_model_metrics(orchestration_context)
     )
 
     assert result.status is AgentRunStatus.INVALID_OUTPUT
-    assert len(executions) == 2
+    assert len(executions) == 3
     assert all(item.validation_status == "INVALID" for item in executions)
     assert all(item.latency_ms == 7 for item in executions)
     assert all((item.input_tokens, item.output_tokens) == (3, 4) for item in executions)

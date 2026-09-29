@@ -2,7 +2,7 @@
 
 Prism is an agentic RAG platform for understanding, navigating, tracing, and analyzing software repositories. It combines deterministic repository structure, hybrid retrieval, bounded tool execution, persistent memory, and evidence-grounded model reasoning to answer repository-level questions without sending an entire repository to a model.
 
-Phase 17 replaces the scaffold with Prism's single bounded AgentController. It performs deterministic task classification, zero-model direct routing, hook-wrapped tool execution, repository and session authorization, memory retrieval, evidence-context construction, conditional external search, selected-slot model invocation, one bounded repair, citation validation, eligible memory writes, and complete trace persistence.
+Phase 17 replaces the scaffold with Prism's single bounded AgentController. It performs deterministic task classification, zero-model direct routing, hook-wrapped tool execution, repository and session authorization, memory retrieval, evidence-context construction, conditional external search, selected-slot model invocation, bounded structured-output repair, citation validation, eligible memory writes, and complete trace persistence.
 
 Phase 18 completes the backend Codebase Q&A vertical slice. Repository questions use a versioned, injection-aware runtime prompt, the selected model slot, schema and citation validation, and the authenticated `POST /repositories/{id}/ask` endpoint. Requests with no repository evidence return 422 without a model call, and answers whose citations are all invalid are downgraded and rejected as ungrounded.
 
@@ -41,7 +41,7 @@ The authenticated API covers repository import, browsing, index status, code ana
 
 ## Evaluation
 
-Phase 26 evaluation work is recorded in [the evaluation report](backend/tests/eval/report.json) and [coverage report](backend/tests/eval/COVERAGE.md). The 25-question deterministic demo-repository run measured Hit@12 at 100%, citation validity at 100%, ordered flow-step recall at 93.33%, and indirect-impact precision at 90%. The complete backend suite now passes, including the previously blocked temporary-directory tests. Core coverage is 92.52%.
+Phase 26 evaluation work is recorded in [the evaluation report](backend/tests/eval/report.json) and [coverage report](backend/tests/eval/COVERAGE.md). The 26-question deterministic demo-repository run measured Hit@12 at 100%, citation validity at 100%, ordered flow-step recall at 100%, and indirect-impact precision at 100%. The historical core coverage measurement is 92.52%.
 
 ## Security review
 

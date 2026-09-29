@@ -36,8 +36,8 @@ printed or stored by this review.
   contain external documentation, not repository content.
 - **Bounded external payload:** `test_actual_model_payload_contains_only_bounded_context_for_large_repository`
   runs a real Q&A request for each model slot over 30 large files. The exact
-  messages received by MockProvider contain at most 12 evidence items, at most
-  24,000 excerpt characters, and an estimated maximum of 6,000 evidence tokens.
+  messages received by MockProvider contain at most 16 evidence items, at most
+  32,000 excerpt characters, and an estimated maximum of 8,000 evidence tokens.
   No complete large file or entire repository occurs in those messages. Fixed
   instructions, schemas, and user input are separate from the evidence budget.
 - **Persisted data inventory:** `test_persisted_table_inventory_matches_documented_policy_and_known_scaffolds`

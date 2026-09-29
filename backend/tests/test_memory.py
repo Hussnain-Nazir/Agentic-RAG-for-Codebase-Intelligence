@@ -17,6 +17,7 @@ from app.memory.service import (
 from app.models import (
     CodeChunk,
     CodeChunkType,
+    Finding,
     FindingType,
     Message,
     MessageRole,
@@ -34,6 +35,73 @@ from app.models import (
     User,
 )
 from app.retrieval.models import RankedChunk
+from app.models.finding import FINDING_TITLE_MAX_LENGTH, normalize_finding_title
+
+
+def test_finding_title_normalization_keeps_short_and_exact_limit_titles() -> None:
+    short = "Impact: Update organization membership"
+    exact = "Review: " + "x" * (FINDING_TITLE_MAX_LENGTH - len("Review: "))
+
+    assert normalize_finding_title(short) == short
+    assert normalize_finding_title(exact) == exact
+
+
+def test_finding_title_normalization_bounds_long_titles() -> None:
+    title = "Impact: " + "organization membership change " * 20
+
+    normalized = normalize_finding_title(title)
+
+    assert len(normalized) <= FINDING_TITLE_MAX_LENGTH
+    assert normalized.startswith("Impact: ")
+    assert normalized.endswith("...")
+    assert title.startswith(normalized[:-3] + " ")
+
+
+@pytest.mark.asyncio
+async def test_all_finding_creation_paths_bound_titles_without_changing_content(session_factory) -> None:
+    full_request = "Change organization membership across services and clients. " * 12
+    full_title = "Impact: " + full_request
+    exact_title = "Flow trace: " + "x" * (FINDING_TITLE_MAX_LENGTH - len("Flow trace: "))
+    async with session_factory() as session:
+        _, repository, index = await make_repository(session)
+        chunk = await add_chunk(session, repository, index, "membership.py", "def membership(): pass")
+        service = MemoryService(session)
+        impact = await service.save_finding(
+            repository.id, FindingType.IMPACT,
+            {"title": full_title, "requested_change": full_request}, [chunk.id], None,
+        )
+        flow = await service.save_finding(
+            repository.id, FindingType.FLOW_TRACE,
+            {"title": "Flow trace: login", "summary": "Observed login flow"}, [chunk.id], None,
+        )
+        exact = await service.save_finding(
+            repository.id, FindingType.FLOW_TRACE,
+            {"title": exact_title, "summary": "Observed another flow"}, [chunk.id], None,
+        )
+        review = await service.save_finding(
+            repository.id, FindingType.REVIEW,
+            {"title": "Original review content"}, [chunk.id], None,
+            title="Review: " + full_request,
+        )
+        direct = Finding(
+            repository_id=repository.id, type=FindingType.REVIEW,
+            title="Review: " + full_request,
+            content={"requested_change": full_request}, evidence_ids=[str(chunk.id)],
+        )
+        session.add(direct)
+        await session.commit()
+        ids = [impact.id, flow.id, exact.id, review.id, direct.id]
+
+    async with session_factory() as session:
+        saved = [await session.get(Finding, finding_id) for finding_id in ids]
+    assert all(item is not None and len(item.title) <= FINDING_TITLE_MAX_LENGTH for item in saved)
+    assert saved[0].title.startswith("Impact: ") and saved[0].title.endswith("...")
+    assert saved[0].content == {"title": full_title, "requested_change": full_request}
+    assert saved[1].title == "Flow trace: login"
+    assert saved[2].title == exact_title
+    assert saved[3].title.startswith("Review: ") and saved[3].title.endswith("...")
+    assert saved[3].content["title"] == "Original review content"
+    assert saved[4].content["requested_change"] == full_request
 
 
 @pytest_asyncio.fixture

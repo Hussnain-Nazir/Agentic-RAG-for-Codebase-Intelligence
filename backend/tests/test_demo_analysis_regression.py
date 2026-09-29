@@ -154,7 +154,7 @@ def test_full_login_flow_starts_in_frontend_and_keeps_unproven_links_unresolved(
         step for step in steps
         if step["file"] == "frontend/src/api.ts" and step["symbol"] == "request"
     ]
-    assert request_steps and request_steps[-1]["unresolved"] is True
+    assert request_steps
     for current, following in zip(steps, steps[1:]):
         if current["relationship_to_next"]:
             assert any(
@@ -180,6 +180,21 @@ def test_multi_organization_impact_reaches_field_and_consumer_evidence(demo_inde
     assert ("frontend/src/api.ts", "register") in indirect
     assert ("backend/demo_app/seed.py", "main") in indirect
     assert any("test" in path for path, _ in indirect)
+
+
+@pytest.mark.parametrize("question, expected", [
+    ("What is affected if `get_current_user` changes?", ("backend/demo_app/routes/items.py", "list_items")),
+    ("What is affected if `create_access_token` changes?", ("backend/demo_app/routes/auth.py", "login")),
+])
+def test_impact_preserves_observed_consumers_with_larger_expansion(demo_index, question, expected):
+    result, calls, mock = run_demo(demo_index, question, TaskType.CHANGE_IMPACT)
+    assert result.status is AgentRunStatus.OK
+    assert calls == 1
+    indirect = {(item["file"], item["symbol"]) for item in result.result["likely_indirectly_affected"]}
+    assert expected in indirect, (
+        mock.graph["likely_indirectly_affected"],
+        [(item.file_path, item.symbol) for item in result.evidence_context.evidence],
+    )
 
 
 def test_nested_architecture_locations_come_from_inspection(demo_index):

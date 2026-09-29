@@ -32,10 +32,12 @@ def _grounded_response(messages, answer: str) -> dict:
 def test_compare_models_shares_exact_prompt_and_persists_peer_results(qa_context) -> None:
     client, session_factory, repository, _, _ = qa_context
     sent: dict[str, list[tuple[str, str]]] = {}
+    generations = {"A": 0, "B": 0}
 
     def provider(slot: str, answer: str) -> MockProvider:
         def response(messages, schema):
             assert schema is RepositoryAnswer
+            generations[slot] += 1
             sent[slot] = [(item.role, item.content) for item in messages]
             return _grounded_response(messages, answer)
         return MockProvider(callback=response)
@@ -51,6 +53,7 @@ def test_compare_models_shares_exact_prompt_and_persists_peer_results(qa_context
     assert response.status_code == 200
     comparison = ModelComparisonResponse.model_validate(response.json())
     assert sent["A"] == sent["B"]
+    assert generations == {"A": 1, "B": 1}
     assert comparison.question == "How does authentication work?"
     assert [item.slot for item in comparison.results] == ["A", "B"]
     assert [item.response["answer"] for item in comparison.results] == [

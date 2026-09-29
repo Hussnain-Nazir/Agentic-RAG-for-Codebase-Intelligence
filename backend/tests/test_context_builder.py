@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.evidence.builder import build_evidence
-from app.evidence.context_builder import MAX_CONTEXT_TOKENS, ContextBuilder
+from app.evidence.context_builder import MAX_CONTEXT_TOKENS, MAX_EVIDENCE_ITEMS, ContextBuilder
 from app.evidence.models import (
     ContextTask,
     EvidenceContext,
@@ -208,7 +208,7 @@ def test_large_candidate_set_drops_lowest_ranked_whole_chunks() -> None:
 
     expected_paths: list[str] = []
     used = 0
-    for candidate in candidates[:12]:
+    for candidate in candidates[:MAX_EVIDENCE_ITEMS]:
         size = len(candidate.chunk.content)
         if used + size > MAX_CONTEXT_TOKENS * 4:
             break
@@ -220,6 +220,17 @@ def test_large_candidate_set_drops_lowest_ranked_whole_chunks() -> None:
     assert context.estimated_tokens <= MAX_CONTEXT_TOKENS
     for item in context.evidence:
         assert item.content_excerpt == original[item.file_path]
+
+
+def test_evidence_item_limit_is_sixteen() -> None:
+    candidates = [
+        make_candidate(number, score=1.0 - number * 0.01,
+                       content=f"def useful_{number}(): return {number}")
+        for number in range(20)
+    ]
+    context = ContextBuilder().build("useful functions", "REPOSITORY_QA", [], candidates, [])
+    assert MAX_EVIDENCE_ITEMS == 16
+    assert len(context.evidence) == 16
 
 
 def test_structural_relationship_metadata_is_preserved() -> None:

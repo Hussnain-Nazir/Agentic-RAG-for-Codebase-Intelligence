@@ -152,6 +152,34 @@ def test_repository_memory_and_findings_endpoints(qa_context) -> None:
     assert invalid.status_code == 422
 
 
+def test_long_change_impact_finding_saves_full_content_with_bounded_title(qa_context) -> None:
+    client, factory, repository, _, _ = qa_context
+    _, _, chunk_id = asyncio.run(_chunk_and_index(factory, repository.id))
+    full_change = "Allow users to belong to multiple organizations across the application. " * 12
+    full_title = "Impact: " + full_change
+    response = client.post(f"/repositories/{repository.id}/findings", json={
+        "type": "IMPACT",
+        "content": {"title": full_title, "requested_change": full_change},
+        "evidence_ids": [str(chunk_id)],
+    })
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert len(payload["title"]) <= 255
+    assert payload["title"].startswith("Impact: ")
+    assert payload["title"].endswith("...")
+    assert payload["content"] == {"title": full_title, "requested_change": full_change}
+
+    async def persisted():
+        async with factory() as session:
+            return await session.get(Finding, uuid.UUID(payload["id"]))
+
+    saved = asyncio.run(persisted())
+    assert saved is not None
+    assert saved.title == payload["title"]
+    assert saved.content["requested_change"] == full_change
+
+
 def test_evidence_links_resolve_only_current_repository_chunks(qa_context) -> None:
     client, factory, repository, _, _ = qa_context
     _, _, chunk_id = asyncio.run(_chunk_and_index(factory, repository.id))

@@ -135,8 +135,8 @@ async def _chunks_for_symbols(
 
 async def expand_structurally(
     top_chunks: list[RankedChunk],
-    max_per_seed: int = 2,
-    max_total: int = 15,
+    max_per_seed: int = 3,
+    max_total: int = 24,
     *,
     session: AsyncSession,
 ) -> list[RankedChunk]:

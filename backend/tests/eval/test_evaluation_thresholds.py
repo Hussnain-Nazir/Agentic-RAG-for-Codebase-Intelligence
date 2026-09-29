@@ -49,7 +49,7 @@ def test_demo_evaluation_clears_ground_truth_thresholds() -> None:
     assert metrics["indirect_precision"] >= 0.6
     assert metrics["architecture_languages_match"] == 1.0
     assert metrics["architecture_frameworks_match"] == 1.0
-    assert all(item["tool_count"] <= 8 for item in report["questions"])
+    assert all(item["tool_count"] <= 12 for item in report["questions"])
     assert not report["unsuccessful_questions"], report["unsuccessful_questions"]
     assert all(not item["errors"] for item in report["questions"])
 

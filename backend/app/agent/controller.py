@@ -21,7 +21,11 @@ from app.agent.classification import (
     extract_symbol,
     repository_subqueries,
 )
-from app.agent.architecture import ArchitectureNarration, validate_architecture_summary
+from app.agent.architecture import (
+    ArchitectureNarration,
+    ArchitectureValidationError,
+    validate_architecture_summary,
+)
 from app.agent.investigations.flow_trace import (
     FlowInvestigationState,
     enforce_observed_transitions,
@@ -64,12 +68,12 @@ from app.tracing.hooks import HookManager, TokenUsage
 from app.validation.evidence_validation import validate_citations
 from app.validation.schema_validation import SchemaValidationError, validate_schema
 
-MAX_TOOL_ITERATIONS = 8
-MAX_STRUCTURAL_ROUNDS = 3
-MAX_STRUCTURAL_CHUNKS = 15
-MAX_WEB_SEARCHES = 2
+MAX_TOOL_ITERATIONS = 12
+MAX_STRUCTURAL_ROUNDS = 5
+MAX_STRUCTURAL_CHUNKS = 24
+MAX_WEB_SEARCHES = 3
 MAX_MODEL_CALLS = 1
-MAX_REPAIR_ATTEMPTS = 1
+MAX_REPAIR_ATTEMPTS = 2
 REPOSITORY_QA_PROMPT_PATH = (
     Path(__file__).parent / "prompts" / "v1" / "repository_qa.md"
 )
@@ -849,6 +853,7 @@ class AgentController:
                 repository_memory,
                 [*repository_evidence, *structural_evidence],
                 web_evidence,
+                preserve_order=task_type is TaskType.CHANGE_IMPACT,
             )
             if supported_subquestions and context.quality is EvidenceQuality.NONE:
                 # Each retained group passed the unchanged gate on its own clause.
@@ -1104,96 +1109,68 @@ class AgentController:
         repair_context: str | None = None,
     ) -> BaseModel | None:
         del task_type, context
-        stage = "schema"
-        try:
-            structured = validate_schema(model_result.content, schema)
-            stage = "post"
-            if post_validator is not None:
-                post_validator(structured)
-        except SchemaValidationError as validation_error:
-            initial_error = (
-                "Architecture narration failed inspected-fact validation"
-                if stage == "post" else "Model JSON or schema validation failed"
-            )
-            await self._hooks.model_execution(
-                run.id,
-                model_slot,
-                provider.model_name,
-                model_result.latency_ms,
-                TokenUsage(model_result.input_tokens, model_result.output_tokens),
-                "INVALID",
-                initial_error,
-            )
-            if counters.repair_attempts >= MAX_REPAIR_ATTEMPTS:
-                return None
-            counters.repair_attempts += 1
-            repair_results: list[LLMResult] = []
-            repair_started = time.perf_counter()
-            repair_stage = "schema"
+        current_result = model_result
+        for attempt in range(MAX_REPAIR_ATTEMPTS + 1):
+            stage = "schema"
             try:
-                structured = await attempt_repair(
-                    model_result.content,
-                    schema,
-                    (
-                        f"{validation_error.detail}\n"
-                        "Use only this deterministic inspection metadata: "
-                        f"{repair_context}"
-                        if repair_context is not None
-                        else validation_error
-                    ),
-                    provider,
-                    on_result=repair_results.append,
-                    timeout_s=self._timeout_s,
-                )
-                repair_stage = "post"
+                structured = validate_schema(current_result.content, schema)
+                stage = "post"
                 if post_validator is not None:
                     post_validator(structured)
-            except Exception as repair_error:
-                repair_result = repair_results[0] if repair_results else None
-                if isinstance(repair_error, SchemaValidationError):
-                    safe_error = (
-                        "Repair failed inspected-fact validation"
-                        if repair_stage == "post" else "Repair failed JSON or schema validation"
-                    )
+            except SchemaValidationError as validation_error:
+                if isinstance(validation_error, ArchitectureValidationError):
+                    safe_error = f"architecture_post_validation:{validation_error.code}"
+                elif stage == "post":
+                    safe_error = "post_validation:invalid_fact"
+                elif any(item.get("type") == "json_invalid" for item in validation_error.errors):
+                    safe_error = "schema_validation:invalid_json"
                 else:
-                    _, safe_error = _provider_failure(repair_error)
+                    safe_error = "schema_validation:invalid_schema"
                 await self._hooks.model_execution(
-                    run.id,
-                    model_slot,
-                    provider.model_name,
-                    (
-                        repair_result.latency_ms if repair_result is not None
-                        else max(1, int((time.perf_counter() - repair_started) * 1000))
-                    ),
-                    (
-                        TokenUsage(repair_result.input_tokens, repair_result.output_tokens)
-                        if repair_result is not None else None
-                    ),
-                    "INVALID",
-                    safe_error,
+                    run.id, model_slot, provider.model_name,
+                    current_result.latency_ms,
+                    TokenUsage(current_result.input_tokens, current_result.output_tokens),
+                    "INVALID", safe_error,
                 )
-                return None
-            repair_result = repair_results[0]
+                if attempt >= MAX_REPAIR_ATTEMPTS:
+                    return None
+                counters.repair_attempts += 1
+                repair_results: list[LLMResult] = []
+                repair_started = time.perf_counter()
+                try:
+                    await attempt_repair(
+                        current_result.content, schema,
+                        (
+                            f"{validation_error.detail}\n"
+                            "Use only this deterministic inspection metadata: "
+                            f"{repair_context}"
+                            if repair_context is not None else validation_error
+                        ),
+                        provider, on_result=repair_results.append,
+                        timeout_s=self._timeout_s,
+                    )
+                except SchemaValidationError:
+                    # The next iteration records the precise safe validation category.
+                    if not repair_results:
+                        return None
+                except Exception as repair_error:
+                    _, safe_error = _provider_failure(repair_error)
+                    await self._hooks.model_execution(
+                        run.id, model_slot, provider.model_name,
+                        max(1, int((time.perf_counter() - repair_started) * 1000)),
+                        None, "INVALID", safe_error,
+                    )
+                    return None
+                current_result = repair_results[0]
+                continue
             await self._hooks.model_execution(
-                run.id,
-                model_slot,
-                provider.model_name,
-                repair_result.latency_ms,
-                TokenUsage(repair_result.input_tokens, repair_result.output_tokens),
-                "REPAIRED_VALID",
-                None,
+                run.id, model_slot, provider.model_name,
+                current_result.latency_ms,
+                TokenUsage(current_result.input_tokens, current_result.output_tokens),
+                "REPAIRED_VALID" if attempt else "VALID", None,
             )
             return structured
-        await self._hooks.model_execution(
-            run.id,
-            model_slot,
-            provider.model_name,
-            model_result.latency_ms,
-            TokenUsage(model_result.input_tokens, model_result.output_tokens),
-            "VALID",
-            None,
-        )
-        return structured
+        return None
 
     async def _save_automatic_memory(
         self,

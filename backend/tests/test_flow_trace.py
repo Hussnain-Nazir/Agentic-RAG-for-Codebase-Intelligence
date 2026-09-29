@@ -362,7 +362,7 @@ def test_known_flow_is_ordered_and_observation_backed(flow_context) -> None:
     names = asyncio.run(calls())
     assert "get_related_files" in names
     assert names.count("get_related_files") >= 2
-    assert len(names) <= 8
+    assert len(names) <= 12
     assert provider_calls["count"] == 1
 
 
@@ -417,7 +417,7 @@ def test_create_item_flow_is_forward_only_and_reaches_model(flow_context) -> Non
             return tools, models
 
     tools, models = asyncio.run(persisted())
-    assert len(tools) <= 8
+    assert len(tools) <= 12
     assert len(models) == 1
 
 
@@ -630,7 +630,7 @@ def test_plain_register_question_marks_external_call_unresolved(flow_context) ->
             ))
 
     names = asyncio.run(tool_names())
-    assert len(names) <= 8
+    assert len(names) <= 12
     assert names.count("get_related_files") >= 2
 
 
@@ -723,7 +723,7 @@ def test_flow_trace_bound_returns_valid_partial_response(flow_context) -> None:
                 {"A": MockProvider(canned_responses=[])},
                 tool_registry=build_registry(session),
                 user_id=user.id,
-                execution_plan=ExecutionPlan(extra_tool_iterations=9),
+                execution_plan=ExecutionPlan(extra_tool_iterations=13),
             )
             return await controller.run(
                 "Trace `login` to create_access_token.",

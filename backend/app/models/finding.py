@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Index, String, func
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.db.base import Base
 from app.models.types import UUIDList
@@ -19,6 +19,21 @@ class FindingType(str, enum.Enum):
     FLOW_TRACE = "FLOW_TRACE"
     IMPACT = "IMPACT"
     REVIEW = "REVIEW"
+
+
+FINDING_TITLE_MAX_LENGTH = 255
+TITLE_ELLIPSIS = "..."
+
+
+def normalize_finding_title(title: str) -> str:
+    if len(title) <= FINDING_TITLE_MAX_LENGTH:
+        return title
+    limit = FINDING_TITLE_MAX_LENGTH - len(TITLE_ELLIPSIS)
+    shortened = title[:limit].rstrip()
+    word_boundary = shortened.rfind(" ")
+    if word_boundary >= limit // 2:
+        shortened = shortened[:word_boundary].rstrip()
+    return shortened + TITLE_ELLIPSIS
 
 
 class Finding(Base):
@@ -35,7 +50,7 @@ class Finding(Base):
     type: Mapped[FindingType] = mapped_column(
         Enum(FindingType, name="finding_type"), nullable=False
     )
-    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    title: Mapped[str] = mapped_column(String(FINDING_TITLE_MAX_LENGTH), nullable=False)
     content: Mapped[dict[str, Any]] = mapped_column(
         JSON().with_variant(JSONB, "postgresql"), nullable=False
     )
@@ -48,3 +63,7 @@ class Finding(Base):
 
     repository: Mapped["Repository"] = relationship(back_populates="findings")
     session: Mapped["Session | None"] = relationship(back_populates="findings")
+
+    @validates("title")
+    def validate_title(self, _key: str, title: str) -> str:
+        return normalize_finding_title(title)

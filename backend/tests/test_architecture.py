@@ -4,14 +4,17 @@ import json
 import pytest
 from sqlalchemy import select
 
-from app.agent.architecture import ArchitectureNarration
+from app.agent.architecture import (
+    ArchitectureNarration, ArchitectureValidationError,
+    validate_architecture_summary,
+)
 from app.llm.base import LLMResult
 from app.llm.mock import MockProvider
 from app.models import AgentRun, ModelExecution, ToolCall
 from app.schemas.responses import ArchitectureResponse
 from app.tools.base import ExecutionContext
 from app.tools.repository_tools import InspectRepositoryTool
-from app.tools.schemas import InspectRepositoryInput
+from app.tools.schemas import ArchitectureSummary, InspectRepositoryInput
 from test_codebase_qa import qa_context
 
 
@@ -112,7 +115,7 @@ def test_architecture_requires_explicit_model_slot(qa_context) -> None:
         "The repository has 7 Python files.",
     ],
 )
-def test_architecture_rejects_invented_summary_after_one_repair(
+def test_architecture_rejects_invented_summary_after_two_repairs(
     qa_context, invented_summary: str,
 ) -> None:
     client, session_factory, repository, provider_box, _ = qa_context
@@ -120,8 +123,8 @@ def test_architecture_rejects_invented_summary_after_one_repair(
 
     def response(messages, schema):
         calls["count"] += 1
-        if calls["count"] == 2:
-            assert "inspect_repository" in messages[0].content
+        if calls["count"] >= 2:
+            assert "deterministic inspection metadata" in messages[0].content
         return {
             "summary": invented_summary,
             "languages": {"python": 7},
@@ -140,7 +143,6 @@ def test_architecture_rejects_invented_summary_after_one_repair(
     provider_box["provider"] = MockProvider(callback=response)
     result = client.get(f"/repositories/{repository.id}/architecture?model_slot=A")
     assert result.status_code == 422
-    assert calls["count"] == 2
 
     async def persisted():
         async with session_factory() as session:
@@ -154,11 +156,11 @@ def test_architecture_rejects_invented_summary_after_one_repair(
             return run.status.value, [item.validation_status for item in models], [item.error for item in models]
 
     status, validations, errors = asyncio.run(persisted())
-    assert status == "INVALID_OUTPUT" and validations == ["INVALID", "INVALID"]
-    assert errors == [
-        "Architecture narration failed inspected-fact validation",
-        "Repair failed inspected-fact validation",
-    ]
+    assert calls["count"] == 3, (validations, errors)
+    assert status == "INVALID_OUTPUT" and validations == ["INVALID"] * 3
+    assert len(errors) == 3
+    assert all(error.startswith("architecture_post_validation:") for error in errors)
+    assert all(invented_summary not in error for error in errors)
 
 
 def test_architecture_accepts_grounded_single_repair(qa_context) -> None:
@@ -196,7 +198,13 @@ def test_architecture_accepts_grounded_single_repair(qa_context) -> None:
     assert result.json()["languages"] == {"documentation": 1, "python": 6}
 
 
-def test_architecture_trace_distinguishes_invalid_json_and_failed_repair(qa_context) -> None:
+@pytest.mark.parametrize("raw_output, reason", [
+    ("{invalid", "schema_validation:invalid_json"),
+    ("{}", "schema_validation:invalid_schema"),
+])
+def test_architecture_trace_distinguishes_json_and_schema_failures(
+    qa_context, raw_output, reason,
+) -> None:
     client, factory, repository, provider_box, _ = qa_context
 
     class MalformedProvider:
@@ -205,7 +213,7 @@ def test_architecture_trace_distinguishes_invalid_json_and_failed_repair(qa_cont
         async def complete(self, messages, schema, timeout_s):
             del messages, schema, timeout_s
             return LLMResult(
-                content="{invalid", input_tokens=1, output_tokens=1,
+                content=raw_output, input_tokens=1, output_tokens=1,
                 latency_ms=1, raw_response={},
             )
 
@@ -222,7 +230,122 @@ def test_architecture_trace_distinguishes_invalid_json_and_failed_repair(qa_cont
                 ModelExecution.agent_run_id == run.id
             )))
 
-    assert asyncio.run(failures()) == [
-        "Model JSON or schema validation failed",
-        "Repair failed JSON or schema validation",
-    ]
+    assert asyncio.run(failures()) == [reason] * 3
+
+
+def _nested_summary() -> ArchitectureSummary:
+    import uuid
+    return ArchitectureSummary(
+        repository_id=uuid.uuid4(), repository_index_id=uuid.uuid4(),
+        repository_index_version=1,
+        languages={"python": 8, "typescript": 4},
+        top_level_folders=["backend", "frontend"],
+        frameworks_detected=["FastAPI", "React", "Vite"],
+        likely_entrypoints=["backend/demo_app/main.py", "frontend/src/main.tsx"],
+        test_locations=["backend/tests/test_api.py"],
+        backend_boundary="backend", frontend_boundary="frontend",
+        database_layer="backend/demo_app/db.py",
+        database_locations=["backend/demo_app/db.py", "backend/demo_app/models.py"],
+        api_organization="backend/demo_app/routes",
+        api_locations=["backend/demo_app/routes/auth.py"],
+        auth_locations=["backend/demo_app/security.py", "backend/demo_app/routes/auth.py"],
+    )
+
+
+@pytest.mark.parametrize("narration", [
+    "The Backend uses FastAPI, while the frontend uses React and Vite. "
+    "Database code is at `backend/demo_app/db.py`; API routes are under `backend/demo_app/routes`. "
+    "Authentication locations include `backend/demo_app/security.py` and `backend/demo_app/routes/auth.py`.",
+    "FastAPI is detected in the Python backend. The React frontend starts at "
+    "`frontend\\src\\main.tsx`. Tests include `backend/tests/test_api.py`. "
+    "The backend/frontend boundaries are listed in the inspection.",
+    "The frontend is built with React/Vite, and the backend uses FastAPI. "
+    "The database layer is `backend/demo_app/db.py`.",
+    "The backend/demo_app/routes directory groups the inspected API files. "
+    "Its backend/demo_app/db.py module is the inspected database location.",
+])
+def test_architecture_accepts_natural_narration_of_nested_inspected_facts(narration):
+    validate_architecture_summary(narration, _nested_summary())
+
+
+@pytest.mark.parametrize("punctuation", ["", ".", ",", ";", ":", "!", "?"])
+def test_architecture_accepts_inspected_path_with_sentence_punctuation(punctuation):
+    summary = _nested_summary()
+    inspected_path = summary.auth_locations[0]
+    validate_architecture_summary(
+        f"The inspected auth file is {inspected_path}{punctuation}", summary
+    )
+
+
+@pytest.mark.parametrize("punctuation", ["", ".", ",", ";", ":", "!", "?"])
+def test_architecture_rejects_invented_path_with_sentence_punctuation(punctuation):
+    summary = _nested_summary()
+    invented_path = "backend/unknown/security.py"
+    with pytest.raises(ArchitectureValidationError) as failure:
+        validate_architecture_summary(
+            f"The auth file is {invented_path}{punctuation}", summary
+        )
+    assert failure.value.code == "unknown_path"
+
+
+def test_architecture_keeps_inspected_directory_trailing_slash_valid():
+    summary = _nested_summary()
+    validate_architecture_summary(
+        f"The API lives in {summary.api_organization}/", summary
+    )
+
+
+@pytest.mark.parametrize("narration, code", [
+    ("The API is in backend/payments/routes.", "unknown_path"),
+    ("Django is the backend framework.", "unknown_framework"),
+    ("The User model handles accounts.", "unknown_component"),
+    ("Rocket is detected.", "unknown_detected_name"),
+    ("The backend uses Redis.", "unknown_technology"),
+])
+def test_architecture_rejects_uninspected_facts(narration, code):
+    with pytest.raises(ArchitectureValidationError) as failure:
+        validate_architecture_summary(narration, _nested_summary())
+    assert failure.value.code == code
+
+
+@pytest.mark.parametrize("responses, expected_status", [
+    (["{invalid", '{"summary":"FastAPI is detected."}'], 200),
+    (["{invalid", '{"summary":"Django is detected."}',
+      '{"summary":"FastAPI is detected."}'], 200),
+    (["{invalid", '{"summary":"Django is detected."}',
+      '{"summary":"Rocket is detected."}'], 422),
+])
+def test_architecture_repair_is_bounded_to_two(qa_context, responses, expected_status):
+    client, factory, repository, provider_box, _ = qa_context
+    calls = []
+
+    class RawSequenceProvider:
+        model_name = "raw-test"
+
+        async def complete(self, messages, schema, timeout_s):
+            del messages, schema, timeout_s
+            calls.append(1)
+            return LLMResult(
+                content=responses[len(calls) - 1], input_tokens=1,
+                output_tokens=1, latency_ms=1, raw_response={},
+            )
+
+    provider_box["provider"] = RawSequenceProvider()
+    result = client.get(f"/repositories/{repository.id}/architecture?model_slot=A")
+    assert result.status_code == expected_status
+    assert len(calls) == len(responses)
+
+    async def execution_statuses():
+        async with factory() as session:
+            run = await session.scalar(select(AgentRun).where(
+                AgentRun.task_type == "ARCHITECTURE_EXPLANATION"
+            ))
+            rows = list(await session.scalars(select(ModelExecution).where(
+                ModelExecution.agent_run_id == run.id
+            )))
+            return run.status.value, [row.validation_status for row in rows]
+
+    run_status, statuses = asyncio.run(execution_statuses())
+    assert run_status == ("OK" if expected_status == 200 else "INVALID_OUTPUT")
+    assert len(statuses) == len(responses)
+    assert statuses.count("INVALID") == len(responses) - (expected_status == 200)

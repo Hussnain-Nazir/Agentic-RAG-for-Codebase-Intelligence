@@ -18,9 +18,9 @@ from app.retrieval.ranking import (
     merge_adjacent_chunks,
 )
 
-MAX_CONTEXT_TOKENS = 6_000
+MAX_CONTEXT_TOKENS = 8_000
 MAX_CONTEXT_CHARS = MAX_CONTEXT_TOKENS * 4
-MAX_EVIDENCE_ITEMS = 12
+MAX_EVIDENCE_ITEMS = 16
 KEYWORD_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
@@ -169,10 +169,10 @@ def _evidence_sort_key(item: Evidence) -> tuple[int, float, str, int, str]:
     )
 
 
-def _dedupe_evidence(evidence: list[Evidence]) -> list[Evidence]:
+def _dedupe_evidence(evidence: list[Evidence], *, preserve_order: bool = False) -> list[Evidence]:
     seen: set[tuple[Any, ...]] = set()
     result: list[Evidence] = []
-    for item in sorted(evidence, key=_evidence_sort_key):
+    for item in evidence if preserve_order else sorted(evidence, key=_evidence_sort_key):
         if item.source_type == "WEB":
             key = ("WEB", (item.external_source_metadata or {}).get("url"))
         else:
@@ -198,6 +198,8 @@ class ContextBuilder:
         repository_memory: list[Any],
         repository_evidence: list[Evidence],
         web_evidence: list[WebEvidenceItem] | None = None,
+        *,
+        preserve_order: bool = False,
     ) -> EvidenceContext:
         task_model = _task_model(task)
         task_type_value = _task_type_value(task_type)
@@ -217,7 +219,8 @@ class ContextBuilder:
             [
                 *repository_evidence,
                 *_web_evidence(web_evidence, repository_id, repository_index_id),
-            ]
+            ],
+            preserve_order=preserve_order,
         )
         kept: list[Evidence] = []
         used_chars = 0

@@ -470,8 +470,8 @@ flowchart TD
 | Merge strategy | weighted sum: `0.5*semantic + 0.3*lexical + 0.2*symbol_presence`, then apply exact-symbol boost |
 | Deduplication | same `chunk_id` collapses to max score; chunks with >50% line-range overlap in the same file collapse to the higher-scored one |
 | Neighboring-chunk handling | if two surviving chunks from the same file are adjacent (within 5 lines), merge into one evidence unit for citation clarity |
-| Structural expansion | for each of the top 8 ranked chunks, pull directly-related chunks via `CodeRelationship` (same file's enclosing symbol, direct importers, direct references) up to 2 additional chunks per seed, capped at 15 total expansion chunks |
-| Final evidence selection | top 12 chunks after ranking + expansion, capped at ~6,000 tokens total (approx. via char count / 4) |
+| Structural expansion | for each of the top 8 ranked chunks, pull directly-related chunks via `CodeRelationship` (same file's enclosing symbol, direct importers, direct references) up to 3 additional chunks per seed, capped at 24 total expansion chunks |
+| Final evidence selection | top 16 chunks after ranking + expansion, capped at ~8,000 tokens total (approx. via char count / 4) |
 
 No LLM reranker is used; ranking is fully deterministic and explainable, which is required for reproducible Compare-Models evidence.
 
@@ -495,7 +495,7 @@ class ContextBuilder:
 
 `EvidenceContext` is provider-independent — the exact same object is serialized into the prompt for Model A or Model B, guaranteeing Compare Models uses identical evidence.
 
-**Responsibilities:** merge all evidence sources; deduplicate; drop redundant neighboring chunks (§14.1); preserve structural relationships (parent/child symbol, caller/callee) as explicit metadata rather than losing it during flattening; prioritize direct (higher-ranked) evidence over expansion evidence; include only repository-memory items relevant to the current task type/keywords (simple keyword/tag match against memory `topic` field); always preserve `file_path`/`start_line`/`end_line` per evidence item; enforce the ~6,000-token evidence cap (§14.1), trimming lowest-ranked items first.
+**Responsibilities:** merge all evidence sources; deduplicate; drop redundant neighboring chunks (§14.1); preserve structural relationships (parent/child symbol, caller/callee) as explicit metadata rather than losing it during flattening; prioritize direct (higher-ranked) evidence over expansion evidence; include only repository-memory items relevant to the current task type/keywords (simple keyword/tag match against memory `topic` field); always preserve `file_path`/`start_line`/`end_line` per evidence item; enforce the ~8,000-token evidence cap (§14.1), trimming lowest-ranked items first.
 
 ### 15.1 Evidence-Quality Behaviors
 
@@ -504,7 +504,7 @@ class ContextBuilder:
 | Strong evidence (several high-scoring, high-confidence chunks) | Proceed normally |
 | Incomplete evidence (few/low-confidence chunks) | Proceed but instruct the model to flag limitations explicitly in the response's `confidence`/`limitations` field |
 | Conflicting evidence (e.g., two differing route definitions) | Both included; model instructed to surface the conflict rather than silently pick one |
-| No evidence found | Skip model invocation for repository-specific claims; return a conservative `RepositoryAnswer` stating insufficient evidence, still recording the attempted retrieval in the trace |
+| No evidence found | Skip model invocation for repository-specific claims; return a conservative `RepositoryAnswer` stating insufficient evidence, still recording the attempted retrieval in the trace. For `EXTERNAL_DOC_QUERY`, "no evidence" means both repository evidence and web evidence are empty; if web evidence exists the model is still invoked (§16.5) |
 | Retrieval produces too much matching context | Cap enforced per §14.1; lowest-ranked items dropped, never truncated mid-chunk |
 
 
@@ -525,13 +525,15 @@ Exactly **one** bounded agent/controller. No Planner/Reviewer/Research/Security/
 | "How does authentication work?" | full Codebase Q&A pipeline |
 | "Trace X from A to B" | bounded multi-step flow-trace investigation |
 | "What is affected if …" | bounded multi-step change-impact investigation |
-| "…compare with current official docs…" | investigation + conditional `search_web` |
+| "…compare with current official docs…" | `EXTERNAL_DOC_QUERY`: repository retrieval + conditional `search_web`, served through the same `/ask` endpoint as `REPOSITORY_QA` (§16.5) |
 
 Not every request invokes an LLM — direct file/symbol/reference lookups return structured tool output with no generative step.
 
 ### 16.2 Task Categories
 
 `DIRECT_FILE_OP, SYMBOL_LOOKUP, REFERENCE_LOOKUP, REPOSITORY_QA, ARCHITECTURE_EXPLANATION, FLOW_TRACE, CHANGE_IMPACT, EXTERNAL_DOC_QUERY, CODE_REVIEW (optional)`.
+
+`REPOSITORY_QA` and `EXTERNAL_DOC_QUERY` are both served by `POST /repositories/{id}/ask` and both return a `RepositoryAnswer`; the task type is classified server-side (§16.1, §18.2) and is not a request field (see §16.5).
 
 ### 16.3 Bounded Lifecycle (Complex Tasks)
 
@@ -557,14 +559,31 @@ Not every request invokes an LLM — direct file/symbol/reference lookups return
 
 | Bound | Value |
 |---|---|
-| Tool iterations per agent run | 8 |
-| Structural expansions per run | 3 rounds, ≤15 chunks total (§14.1) |
-| Web searches per run | 2 |
-| LLM calls per agent run | 1 (2 only in explicit Compare Models mode) |
-| Structured-output repair attempts | 1 |
+| Tool iterations per agent run | 12 |
+| Structural expansions per run | 5 rounds, ≤24 chunks total (§14.1) |
+| Web searches per run | 3 |
+| Normal generation calls per agent run | 1 selected model (2 peer generations only in explicit Compare Models mode) |
+| Structured-output repair attempts | 2 per generation, in addition to generation calls |
 
 No unbounded ReAct loop exists; exceeding a bound terminates the run with a partial result and `AgentRun.status = BOUNDS_EXCEEDED`, returned to the user with whatever evidence was gathered rather than failing silently.
 
+
+### 16.5 `/ask` Handling of `REPOSITORY_QA` and `EXTERNAL_DOC_QUERY`
+
+`POST /repositories/{id}/ask` accepts both task types. The request shape is unchanged (`{question, model_slot}`); the controller classifies the question (§16.1) and the client never chooses the task type.
+
+| Aspect | `REPOSITORY_QA` | `EXTERNAL_DOC_QUERY` |
+|---|---|---|
+| Web search | Never | At most 2 `search_web` calls (§16.4), only when repository evidence alone is insufficient (§16.3 step 10) |
+| Evidence | CODE / DOCUMENTATION | CODE / DOCUMENTATION plus WEB, kept distinguishable by `source_type` |
+| Prompt | Repository Q&A template | Repository Q&A template extended to label WEB evidence as untrusted external data (§28) |
+| Response schema | `RepositoryAnswer` | `RepositoryAnswer` (no new schema) |
+| 422 insufficient evidence | No repository evidence | No repository evidence and no web evidence |
+| Web failure | Not applicable | Degrades gracefully (§18.2): answer from repository evidence with the limitation stated in `limitations` |
+| Automatic memory write | Per §19.2 | Never from WEB evidence alone (§19.2) |
+| Model calls | 1 | 1 |
+
+WEB evidence never authorizes a tool call and never overrides system instructions (§18.2, §28).
 
 ---
 
@@ -621,7 +640,7 @@ Validation order: repository access → path normalization (reject `..`, absolut
 
 ### 18.2 Web Search Plugin (Mandatory, Conditional)
 
-Web search is **never** automatic for ordinary repository questions. It triggers only when the task is classified `EXTERNAL_DOC_QUERY` — i.e., the query explicitly references external/current documentation, deprecation status, or "official" comparison (matched via task-classification keywords: "deprecated", "official docs", "current version", "compare with documentation", "latest API").
+Web search is **never** automatic for ordinary repository questions. It triggers only when the task is classified `EXTERNAL_DOC_QUERY` — i.e., the query explicitly references external/current documentation, deprecation status, or "official" comparison (matched via task-classification keywords: "deprecated", "official docs", "current version", "compare with documentation", "latest API"). An `EXTERNAL_DOC_QUERY` is submitted through the same `POST /repositories/{id}/ask` endpoint as a `REPOSITORY_QA` question and returns a `RepositoryAnswer` in which WEB evidence appears alongside CODE/DOCUMENTATION evidence (§16.5).
 
 ```python
 class WebSearchProvider(Protocol):
@@ -657,7 +676,7 @@ Three logical categories, one `MemoryService`:
 
 ### 19.2 Writes
 
-- **Automatic writes** occur only after a successful `REPOSITORY_QA`/`ARCHITECTURE_EXPLANATION` run whose answer includes a durable, evidence-backed fact (heuristic: high-confidence answer + at least one CODE evidence citation) — not for every message.
+- **Automatic writes** occur only after a successful `REPOSITORY_QA`/`ARCHITECTURE_EXPLANATION` run whose answer includes a durable, evidence-backed fact (heuristic: high-confidence answer + at least one CODE evidence citation) — not for every message. `EXTERNAL_DOC_QUERY` runs never write repository memory from WEB evidence, and a fact is saved from such a run only if it independently meets the CODE-citation rule above.
 - **Explicit writes** occur via the "Save Finding" UI action or the `save_memory` tool call the agent makes after a flow-trace/impact-analysis run the user chose to keep.
 
 ### 19.3 Staleness
@@ -774,11 +793,12 @@ Any OpenAI-compatible hosted endpoint may be configured here without changing bu
 
 ### 22.3 Validation Pipeline
 
-1. **Schema validation** — Pydantic parse of the raw model output; on failure, allow **one** bounded repair attempt (re-prompt with the validation error appended), then fail the run with `AgentRun.status = INVALID_OUTPUT`.
+1. **Schema validation** — Pydantic parse of the raw model output; on failure, allow **two** bounded repair attempts (re-prompt with the validation error appended), then fail the run with `AgentRun.status = INVALID_OUTPUT`.
 2. **Evidence ID validation** — every cited `evidence_id` must exist in the `EvidenceContext` actually sent to the model (never accept IDs invented post-hoc).
-3. **File existence validation** — cited `file_path` must exist in the current `repository_index_version`.
-4. **Line-range validation** — cited ranges must be within the file's actual line count and within ±5 lines of the original evidence excerpt's range (tolerating minor drift, rejecting fabricated ranges).
-5. **Repository/index-version validation** — evidence must belong to the same `repository_index_version` used to build the context; stale-version citations are rejected.
+3. **File existence validation** — cited `file_path` must exist in the current `repository_index_version`. (Applies to `CODE`/`DOCUMENTATION` evidence only.)
+4. **Line-range validation** — cited ranges must be within the file's actual line count and within ±5 lines of the original evidence excerpt's range (tolerating minor drift, rejecting fabricated ranges). (Applies to `CODE`/`DOCUMENTATION` evidence only.)
+5. **Repository/index-version validation** — evidence must belong to the same `repository_index_version` used to build the context; stale-version citations are rejected. (Applies to `CODE`/`DOCUMENTATION` evidence only.)
+6. **Web evidence validation** — a cited `WEB` evidence item must exist in the `EvidenceContext` sent to the model (step 2) and its `url` must match a result actually returned by `search_web` in this run; WEB evidence has no file path, line range, or index version, so steps 3-5 do not apply to it. A WEB citation that fails this check is removed and the answer downgraded, exactly as for other failed citations.
 
 If citations fail validation, they are **not** silently accepted — the finding is downgraded (`confidence` lowered, offending citation removed) rather than trusted, and this is recorded in the trace. Prompts explicitly instruct: use only supplied evidence; never invent files/symbols/line numbers/tool results; distinguish confirmed fact from inference; state insufficient evidence rather than fabricate.
 
@@ -941,7 +961,7 @@ All endpoints require `Authorization: Bearer <session JWT>` unless noted. Reposi
 | GET | `/repositories/{id}/files` | Browse file tree | `?path=` | `list[FileTreeEntry]` | 404 |
 | GET | `/repositories/{id}/files/content` | Inspect file | `?path=&start_line=&end_line=` | `FileContent` | 400 unsupported |
 | GET | `/repositories/{id}/symbols` | Search symbols | `?q=` | `list[CodeSymbol]` | — |
-| POST | `/repositories/{id}/ask` | Repository Q&A | `{question, model_slot}` | `RepositoryAnswer` + `agent_run_id` | 422 insufficient evidence |
+| POST | `/repositories/{id}/ask` | Repository Q&A (`REPOSITORY_QA`) and external-documentation questions (`EXTERNAL_DOC_QUERY`); task type classified server-side | `{question, model_slot}` | `RepositoryAnswer` + `agent_run_id` (WEB evidence included when `search_web` ran) | 422 insufficient evidence (no repository evidence and, for `EXTERNAL_DOC_QUERY`, no web evidence either) |
 | POST | `/repositories/{id}/flow-trace` | Flow trace | `{question, model_slot}` | `FlowTraceResponse` | — |
 | POST | `/repositories/{id}/change-impact` | Change impact | `{change_description, model_slot}` | `ChangeImpactResponse` | — |
 | GET | `/repositories/{id}/architecture` | Architecture summary | — | `ArchitectureResponse` | — |
@@ -1115,7 +1135,7 @@ Raw secret-bearing file contents (§10's denylist) are never persisted in any of
 
 ### 29.1 Explicit Error Behaviors
 
-GitHub installation failure/revocation, repository access removed, repository deleted/renamed, branch deleted, GitHub rate limit/timeout — all handled per §7.4. Invalid/oversized ZIP, Zip Slip attempts, unsupported/binary files — per §8.2/§10. Parser failure — safe fallback chunk (§11), never aborts indexing. Partial indexing — `RepositoryIndex.state = PARTIAL` with per-file failure list. Embedding/database/pgvector failure — job marked `FAILED` with reason, retryable via re-sync. No retrieval evidence / weak retrieval — per §15.1. Web-search failure — degrade gracefully (§18.2). Selected-model timeout/error/rate limit — surfaced as a clear error, **no automatic model fallback** (§21.2). Malformed structured output / failed repair — `AgentRun.status = INVALID_OUTPUT` after the single bounded repair attempt (§22.3). Invalid evidence citation — downgraded, not trusted (§22.3). Unauthorized repository access — `403` at the route dependency.
+GitHub installation failure/revocation, repository access removed, repository deleted/renamed, branch deleted, GitHub rate limit/timeout — all handled per §7.4. Invalid/oversized ZIP, Zip Slip attempts, unsupported/binary files — per §8.2/§10. Parser failure — safe fallback chunk (§11), never aborts indexing. Partial indexing — `RepositoryIndex.state = PARTIAL` with per-file failure list. Embedding/database/pgvector failure — job marked `FAILED` with reason, retryable via re-sync. No retrieval evidence / weak retrieval — per §15.1. Web-search failure — degrade gracefully (§18.2). Selected-model timeout/error/rate limit — surfaced as a clear error, **no automatic model fallback** (§21.2). Malformed structured output / failed repair — `AgentRun.status = INVALID_OUTPUT` after two bounded repair attempts (§22.3). Invalid evidence citation — downgraded, not trusted (§22.3). Unauthorized repository access — `403` at the route dependency.
 
 ### 29.2 Bounds
 
@@ -1124,13 +1144,13 @@ GitHub installation failure/revocation, repository access removed, repository de
 | Max repository size for MVP | 500 MB / 20,000 files |
 | Max individual file size | 1.5 MB |
 | Max ZIP size | 200 MB |
-| Tool iterations per agent run | 8 |
-| Structural expansions per run | 3 rounds / 15 chunks |
+| Tool iterations per agent run | 12 |
+| Structural expansions per run | 5 rounds / 24 chunks |
 | Retrieval candidates per signal | 30 (semantic), 30 (lexical), all exact + 10 fuzzy (symbol) |
-| Final evidence chunks/context | 12 chunks / ~6,000 tokens |
-| Web searches per run | 2 |
-| LLM calls per agent run | 1 (2 in Compare Models) |
-| Output-repair attempts | 1 |
+| Final evidence chunks/context | 16 chunks / ~8,000 tokens |
+| Web searches per run | 3 |
+| Normal generation calls per agent run | 1 selected model (2 peer generations in Compare Models) |
+| Output-repair attempts | 2 per generation, in addition to generation calls |
 | Concurrent indexing jobs | 2 |
 
 ### 29.3 Caching
@@ -1355,7 +1375,7 @@ Web Plugin → Model Comparison → Testing/Evaluation → Deployment/Polish
 27. Repository synchronization handles new/changed/deleted files.
 28. Changed supporting evidence stales/invalidates repository memory.
 29. File-reading plugin works.
-30. Web-search plugin works conditionally.
+30. Web-search plugin works conditionally, including an `EXTERNAL_DOC_QUERY` submitted through `POST /repositories/{id}/ask`, while an ordinary `REPOSITORY_QA` question through the same endpoint never triggers a web search.
 31. Web evidence and repository evidence remain distinct.
 32. Pre/post hooks execute.
 33. Agent runs/tool calls/model executions are persisted.
@@ -1398,7 +1418,7 @@ Demo repository: the fixture full-stack app (React frontend, FastAPI backend, JW
 2. **Codebase Q&A** — ask "How does authentication work in this repository?"; show the grounded answer with real evidence citations.
 3. **Flagship Flow Trace** — ask "Trace how a user logs in, starting from the frontend form and ending when the backend returns an access token."; show the visible agent/tool sequence, cross-file evidence, and the ordered trace.
 4. **Change Impact** — ask "We want users to belong to multiple organizations instead of one. What parts of the repository are affected?"; show directly-affected vs. likely-indirectly-affected, evidence, and tests to inspect.
-5. **Web Plugin** — ask a repository-related question that genuinely requires current external framework/library documentation; show the conditional search trigger and distinct web evidence.
+5. **Web Plugin** — ask, through the same Ask tab/`/ask` endpoint, a repository-related question that genuinely requires current external framework/library documentation; show the conditional search trigger and distinct web evidence.
 6. **Memory** — ask a follow-up that meaningfully reuses repository/session memory.
 7. **Model Selection / Comparison** — switch Model A → Model B for a normal request; then run Compare Models on the same question, showing the shared `EvidenceContext`, two peer outputs, latency/token metadata, and validation status, with no automatic winner declared.
 
