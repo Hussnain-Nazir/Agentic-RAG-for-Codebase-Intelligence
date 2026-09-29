@@ -1,5 +1,7 @@
 # AI Development Log
 
+Phase entries below were checked against the available Git history during the Phase 29 documentation review. The phase feature commits and their later fixes are present, but Git history cannot establish a person's acceptance decisions. Missing `Accepted` and `Modified/rejected` fields therefore use explicit manual placeholders. Historical test results remain as recorded by the phase entries; commit metadata alone cannot independently reconstruct console output from the original run.
+
 ### 2026-09-17 - Phase 0 scaffold
 
 **Prompt:**
@@ -67,6 +69,10 @@
 
 **Summary of generated output:** Created the Phase 0 FastAPI, React, Vite, TypeScript, Docker Compose, environment example, README, and test scaffolds.
 
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
+
+**Modified/rejected:** [MANUAL - fill in if relevant; personal modification or rejection decisions are not verifiable from repository history.]
+
 **Resulting module/commit:** `backend/`, `frontend/`, `docker-compose.yml`, `.env.example`, `README.md`, and `prompts.md`.
 
 **Test result:** Backend pytest passed 1 test. Frontend Vitest passed 1 test. The frontend production build passed. After Docker became available, `docker compose config` passed and the backend, frontend, and PostgreSQL services started successfully. The backend health endpoint and frontend returned HTTP 200.
@@ -129,6 +135,10 @@
 
 **Summary of generated output:** Added the users ORM model and baseline migration, async database session setup, bcrypt password hashing, JWT authentication, register and login routes, bearer-token dependency, Docker migration startup, and authentication tests.
 
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
+
+**Modified/rejected:** [MANUAL - fill in if relevant; personal modification or rejection decisions are not verifiable from repository history.]
+
 **Resulting module/commit:** `backend/alembic/`, `backend/app/db/`, `backend/app/models/user.py`, `backend/app/auth/`, `backend/app/schemas/auth.py`, `backend/app/api/routes/auth.py`, `backend/tests/test_auth.py`, and backend startup configuration.
 
 **Test result:** Backend pytest passed all 7 tests, including the Phase 0 health test and 6 Phase 1 authentication tests. The baseline Alembic migration upgraded a fresh PostgreSQL container to revision 0001 successfully, and the live `users` table matched the required schema.
@@ -190,6 +200,10 @@
 **AI tool:** Codex
 
 **Summary of generated output:** Added the four repository source ORM models and enums, Alembic revision 0002, the RepositorySource protocol and intentional GitHub/upload stubs, the shared repository ownership dependency, and Phase 2 model, authorization, enum, and stub tests.
+
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
+
+**Modified/rejected:** [MANUAL - fill in if relevant; personal modification or rejection decisions are not verifiable from repository history.]
 
 **Resulting module/commit:** `backend/app/models/`, `backend/app/sources/`, `backend/app/api/deps.py`, `backend/alembic/versions/0002_add_repository_source_tables.py`, and `backend/tests/test_repositories.py`.
 
@@ -261,6 +275,10 @@
 **AI tool:** Codex
 
 **Summary of generated output:** Added the provider protocol and result types, configurable OpenAI-compatible HTTP provider, deterministic MockProvider, equal Model A and Model B factories, authenticated model-name configuration endpoint, manual-only smoke script, and isolated Phase 3 tests.
+
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
+
+**Modified/rejected:** [MANUAL - fill in if relevant; personal modification or rejection decisions are not verifiable from repository history.]
 
 **Resulting module/commit:** `backend/app/llm/`, `backend/app/api/routes/models.py`, `backend/scripts/smoke_test_model.py`, `backend/app/main.py`, and `backend/tests/test_llm.py`.
 
@@ -339,6 +357,10 @@
 **AI tool:** Codex
 
 **Summary of generated output:** Added the Evidence schema, empty ToolRegistry and Tool protocol, minimal persisted MemoryService, agent trace ORM models and hooks with recursive credential redaction, and a minimal schema-validating AgentController path through MockProvider. Added the Section 25 Session table as the required foreign-key target for AgentRun without implementing conversation behavior.
+
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
+
+**Modified/rejected:** [MANUAL - fill in if relevant; personal modification or rejection decisions are not verifiable from repository history.]
 
 **Resulting module/commit:** `backend/app/evidence/`, `backend/app/tools/`, `backend/app/memory/`, `backend/app/tracing/`, `backend/app/agent/`, agent trace models in `backend/app/models/`, `backend/alembic/versions/0003_add_agent_scaffold_tables.py`, and `backend/tests/test_agent_skeleton.py`.
 
@@ -434,6 +456,10 @@
 
 **Summary of generated output:** Added preflight-safe ZIP extraction with path, symlink, archive-size, extracted-size, and raw-file-count enforcement; source-independent filtering and classification; the completed uploaded repository source; generic normalization; synchronous authenticated ZIP ingestion; and the non-blocking repository size warning migration. Added configurable extracted-size and file-count hard bounds without changing the 2,000-file warning into a rejection.
 
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
+
+**Modified/rejected:** [MANUAL - fill in if relevant; personal modification or rejection decisions are not verifiable from repository history.]
+
 **Resulting module/commit:** `backend/app/ingestion/`, `backend/app/sources/upload.py`, `backend/app/api/routes/repositories.py`, `backend/alembic/versions/0004_add_repository_index_size_warning.py`, configuration files, checked-in fixtures under `backend/tests/fixtures/`, and `backend/tests/test_zip_ingestion.py`.
 
 **Test result:** All 29 backend tests and the existing frontend test passed. The ZIP suite verified pre-write Zip Slip rejection, a 413 response before extraction for oversized uploads, exclusion of `node_modules/` and `.env`, binary classification, expected persistence for a clean fixture, and `READY` plus `size_warning=true` for 2,001 indexable files. Alembic revision 0004 applied to PostgreSQL, the non-null boolean column and false default were confirmed, Docker Compose validated, and the backend health check returned `{"status":"ok"}`.
@@ -508,6 +534,10 @@
 **AI tool:** Codex
 
 **Summary of generated output:** Added the GitHub App REST client with RS256 app JWT signing, expiry-aware installation-token caching, pagination, repository metadata/tree/blob methods, bounded retry behavior, and typed lifecycle errors. Added authenticated GitHub installation routes, completed GitHubRepositorySource, and extended the existing repository import endpoint so GitHub and ZIP sources share the same normalization and persistence path.
+
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
+
+**Modified/rejected:** [MANUAL - fill in if relevant; personal modification or rejection decisions are not verifiable from repository history.]
 
 **Resulting module/commit:** `backend/app/github/`, `backend/app/api/routes/github.py`, `backend/app/sources/github.py`, the shared `backend/app/api/routes/repositories.py` import route, `backend/tests/test_github_integration.py`, dependency updates, Docker entrypoint normalization, and README manual setup instructions.
 
@@ -587,6 +617,8 @@
 
 **Summary of generated output:** Added Tree-sitter parser adapters for all five supported source extensions, structural symbol and import extraction, route and test-file metadata, relationship extraction with constrained confidence, non-raising fallback parsing, persisted code symbol and relationship models, and repository-wide parsing integrated into the shared ingestion path. Added persisted source content only for supported, safe source files so parsing remains available after temporary ZIP extraction ends.
 
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
+
 **Modified/rejected:** Kept chunking, embeddings, retrieval, and later indexing behavior out of scope. Relationships receive high confidence only when a parsed AST reference resolves to a definition in the same file; name-only and external matches remain low confidence.
 
 **Resulting module/commit:** `backend/app/parsing/`, `backend/app/ingestion/parsing_stage.py`, `backend/app/models/code_symbol.py`, `backend/app/models/code_relationship.py`, `backend/alembic/versions/0006_add_code_structure.py`, parser fixtures, and `backend/tests/test_parsing.py`.
@@ -661,6 +693,8 @@
 
 **Summary of generated output:** Added structural chunkers for the supported code languages, fallback and document chunkers, config-file handling, large-symbol overlap splitting, large-class method splitting, tiny-symbol merging, module-section extraction, comment attachment, and deterministic SHA-256 hashes. Added CodeChunk persistence with a nullable 384-dimensional pgvector column and integrated chunking into the shared ZIP and GitHub ingestion path.
 
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
+
 **Modified/rejected:** Kept embedding generation and similarity retrieval out of scope. The SQLAlchemy attribute for the database `metadata` column is named `chunk_metadata` because `metadata` is reserved by SQLAlchemy's declarative base; the persisted column name remains exactly `metadata`.
 
 **Resulting module/commit:** `backend/app/chunking/`, `backend/app/ingestion/chunking_stage.py`, `backend/app/models/code_chunk.py`, `backend/alembic/versions/0007_add_code_chunks.py`, and `backend/tests/test_chunking.py`.
@@ -729,6 +763,8 @@
 
 **Summary of generated output:** Added the provider-agnostic embedding protocol, the local sentence-transformers provider with 32-item batching and 384-dimensional validation, settings-derived embedding model version tracking, content-hash reuse across chunks, and isolated cosine vector search. Added the Phase 9 PostgreSQL indexes and a lookup index for content hash plus embedding model version.
 
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
+
 **Modified/rejected:** Automated tests use fake embedding models and never download `BAAI/bge-small-en-v1.5`. This keeps the suite deterministic, fast, and independent of network access while directly testing 32-item batching, vector persistence, content-hash reuse, reruns with zero computations, cosine ranking, and repository isolation. The production provider still loads the configured sentence-transformers model. The composite and ivfflat indexes had been created prematurely in revision 0007; their definitions were moved to revision 0008, which conditionally removes the earlier indexes before recreating them so both existing and fresh databases upgrade safely.
 
 **Resulting module/commit:** `backend/app/embeddings/`, `backend/app/ingestion/embedding_stage.py`, `backend/app/retrieval/vector_search.py`, `backend/app/models/code_chunk.py`, `backend/alembic/versions/0008_add_embedding_indexes.py`, `backend/requirements.txt`, and `backend/tests/test_embeddings.py`.
@@ -766,6 +802,8 @@
 **AI tool:** Codex
 
 **Summary of generated output:** Added a shared `RankedChunk` result type, updated semantic retrieval to use it, added PostgreSQL full-text lexical retrieval, added exact and trigram symbol retrieval mapped to owning chunks, and added the required generated search vector and GIN indexes.
+
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
 
 **Modified/rejected:** Kept hybrid merging, cross-signal normalization, exact-symbol boosting, structural expansion, and context construction out of scope. SQLite uses deterministic local scoring only for isolated automated tests; PostgreSQL production paths use `ts_rank_cd`, the generated `tsvector`, and `pg_trgm` candidate ranking.
 
@@ -807,6 +845,8 @@
 
 **Summary of generated output:** Added deterministic per-signal normalization, frozen weighted merging, exact-symbol boosting, chunk and overlap deduplication, adjacent evidence-unit merging, bounded CodeRelationship expansion, and the end-to-end HybridRetriever pipeline.
 
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
+
 **Modified/rejected:** Kept ContextBuilder token limits, final top-12 evidence selection, Evidence object construction, model calls, and agent integration out of scope. Adjacent transient evidence units preserve deterministic IDs and their original source chunk IDs. Structural expansion adds at most 15 related chunks in addition to the ranked seeds, matching section 14.1's expansion bound.
 
 **Resulting module/commit:** `backend/app/retrieval/ranking.py`, `backend/app/retrieval/expansion.py`, `backend/app/retrieval/hybrid.py`, `backend/app/retrieval/models.py`, `backend/app/retrieval/__init__.py`, and `backend/tests/test_hybrid_retrieval.py`.
@@ -838,6 +878,8 @@
 
 **Summary of generated output:** Added deterministic Evidence construction, provider-independent EvidenceContext models, ContextBuilder merging and memory filtering, whole-item context-budget enforcement, optional web-evidence conversion, relationship metadata preservation, and evidence-quality classification.
 
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
+
 **Modified/rejected:** Kept web provider calls, agent orchestration, model-provider references, weak-evidence routing decisions, and structured response generation out of scope. Context trimming keeps complete excerpts and drops lower-ranked items rather than truncating a retained item.
 
 **Resulting module/commit:** `backend/app/evidence/`, `backend/app/retrieval/models.py`, `backend/app/retrieval/ranking.py`, `backend/app/retrieval/expansion.py`, `backend/app/retrieval/symbol_search.py`, and `backend/tests/test_context_builder.py`.
@@ -865,6 +907,8 @@
 **AI tool:** Codex
 
 **Summary of generated output:** Added repository memory, finding, and conversation-message persistence; implemented bounded session summaries, repository-memory search, evidence-grounded writes, changed-file invalidation, finding validation, and the automatic-write eligibility function used by the future controller call site.
+
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
 
 **Modified/rejected:** Kept incremental-sync wiring out of scope. The Phase 4 `memory_items` scaffold table remains in the migration history for safety but is no longer used by MemoryService. Added the specification's `messages` table because session-memory retrieval cannot be implemented without persisted conversation turns.
 
@@ -895,6 +939,8 @@
 
 **Summary of generated output:** Added stored-index file and line-range tools, ordered authorization and safety validation, SerpAPI organic-result mapping, bounded and cached web search, safe provider failure handling, the web-source cache model and migration, and built-in plugin registration.
 
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
+
 **Modified/rejected:** Kept task-classification wiring out of scope. The tool exposes the Phase 17 trigger helper but always executes when explicitly called. Cache rows store only normalized-query hashes and public result metadata; API keys and raw provider errors are never persisted or returned.
 
 **Resulting module/commit:** `backend/app/plugins/`, `backend/app/tools/`, `backend/app/models/web_source.py`, `backend/alembic/versions/0012_add_web_sources.py`, `backend/app/config.py`, `.env.example`, `backend/tests/test_file_plugin.py`, and `backend/tests/test_web_plugin.py`.
@@ -922,6 +968,8 @@
 **AI tool:** Codex
 
 **Summary of generated output:** Added provider-independent tool schemas, eight real repository/memory tools, shared authorization and current-index helpers, centralized typed tool errors, deterministic architecture inspection, symbol/reference mappings, structural evidence expansion, and exact eleven-tool registry assembly.
+
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
 
 **Modified/rejected:** Kept tool-selection and routing logic out of scope. SearchCodebase lazily constructs the local embedding provider when one is not injected, keeping registry construction lightweight and tests deterministic. Optional review history only queries saved REVIEW findings and does not implement the review feature.
 
@@ -951,6 +999,8 @@
 
 **Summary of generated output:** Added all required response schemas, generic Pydantic schema validation with repair-ready error details, canonical EvidenceContext citation validation, typed downgrade results, and a single-call structured-output repair helper.
 
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
+
 **Modified/rejected:** Kept controller integration and feature-specific prompts out of scope. EvidenceContext gained provider-independent repository/index IDs and file line counts so citation validation can check current provenance and real bounds without a database or provider dependency. Ingestion now stores file line counts in chunk metadata for future contexts while retaining a fallback for older indexes.
 
 **Resulting module/commit:** `backend/app/schemas/responses.py`, `backend/app/validation/`, `backend/app/agent/repair.py`, Phase 12 evidence-context metadata, ingestion chunk metadata, and `backend/tests/test_structured_output_validation.py`.
@@ -978,6 +1028,8 @@
 **AI tool:** Codex
 
 **Summary of generated output:** Added deterministic task classification, a single authorization-scoped AgentController, hook-wrapped registry execution, provider-independent evidence-context assembly from tool outputs, selected-slot structured generation, bounded repair and citation validation, automatic eligible memory writes, partial-result bound termination, and persisted run/tool/model traces.
+
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
 
 **Modified/rejected:** Kept feature-specific flow-trace and impact prompts and investigation strategies out of scope. Added an injectable deterministic ExecutionPlan for later strategies and bound-forcing tests; the controller remains the only orchestrator. Provider errors are traced and surfaced without invoking the other model slot.
 
@@ -1021,6 +1073,8 @@
 
 **Summary of generated output:** Added the versioned Repository Q&A runtime prompt, controller prompt selection, authenticated Q&A API route, selected-slot provider and tool-registry dependencies, explicit no-evidence handling, rejection of answers whose citations are all invalid, and end-to-end fixture tests with persisted trace verification.
 
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
+
 **Modified/rejected:** Preserved the Phase 16 downgrade-and-remove citation behavior, then marked a Q&A run `INVALID_OUTPUT` only when citation validation removed every cited evidence item. The API maps that case to 422 so a fully ungrounded claim is not returned as a successful answer. The route creates a repository-scoped session because the specified request contract contains only `question` and `model_slot`. Flow tracing, change impact, frontend work, and benchmark evaluation were not implemented.
 
 **Resulting module/commit:** `backend/app/agent/prompts/v1/repository_qa.md`, `backend/app/agent/controller.py`, `backend/app/api/routes/analysis.py`, `backend/app/main.py`, `backend/tests/test_codebase_qa.py`, `README.md`, and `prompts.md`.
@@ -1046,6 +1100,8 @@
 
 **Summary of generated output:** Added the versioned flow-trace prompt, a deterministic investigation state that follows exact symbol definitions through references and related evidence, controller-owned bound enforcement, flow observations in trusted prompt metadata, schema-valid partial traces, and the authenticated flow-trace API endpoint.
 
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
+
 **Modified/rejected:** Kept orchestration inside the existing single AgentController. The investigation module receives a hook-wrapped controller callback and does not define independent bounds. Fuzzy symbol matches are not accepted as definitions. When structural evidence reaches the shared cap, further expansion stops without exceeding it. Change-impact behavior and frontend work remain unimplemented.
 
 **Resulting module/commit:** `backend/app/agent/prompts/v1/flow_trace.md`, `backend/app/agent/investigations/`, `backend/app/agent/controller.py`, `backend/app/api/routes/analysis.py`, `backend/tests/test_flow_trace.py`, `backend/tests/test_agent_orchestration.py`, `README.md`, and `prompts.md`.
@@ -1062,6 +1118,8 @@
 
 **Summary of generated output:** Added a versioned change-impact prompt, an evidence-backed investigation and deterministic affected-item guard, the authenticated change-impact endpoint, GitHub SHA-based synchronization, current-version relationship remapping, unchanged memory provenance remapping, and a sync endpoint with ownership and in-progress checks.
 
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
+
 **Modified/rejected:** Kept the agent bounds and hybrid retrieval parameters unchanged. Sync reuses unchanged rows in a new index version and only parses or embeds them if the configured embedding model version changes. The endpoint performs the sync synchronously; the DB state records each indexing stage. No frontend, model comparison, or architecture-narration behavior was added.
 
 **Resulting module/commit:** `backend/app/agent/prompts/v1/change_impact.md`, `backend/app/agent/investigations/change_impact.py`, `backend/app/agent/controller.py`, `backend/app/api/routes/analysis.py`, `backend/app/ingestion/sync.py`, `backend/app/api/routes/repositories.py`, `backend/app/sources/github.py`, `backend/tests/test_change_impact.py`, and `backend/tests/test_incremental_sync.py`. Changes were left uncommitted.
@@ -1075,6 +1133,8 @@
 **AI tool:** Codex
 
 **Summary of generated output:** Added the architecture prompt, direct inspected-metadata controller path, selected-model invocation, deterministic response-field projection, the authenticated endpoint, and fixture-based tests. The inspection tool now recognizes FastAPI imports in stored Python source as well as dependency manifests.
+
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
 
 **Modified/rejected:** The existing `ArchitectureSummary` does not contain database-layer or frontend/backend boundary details for the small fixture. Those response fields remain unset unless the tool reports a corresponding top-level folder. Model-provided factual fields are replaced by values derived from the inspected summary so unsupported claims cannot enter the response.
 
@@ -1090,6 +1150,8 @@
 
 **Summary of generated output:** Added comparison orchestration through the existing memory, hybrid search, optional symbol expansion, ContextBuilder, Q&A prompt, response validation, citation validation, and trace hooks. The API returns peer results in slot order without ranking or a winner. A failed slot reports a sanitized error while the other slot continues.
 
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
+
 **Modified/rejected:** Kept the normal single-model controller paths unchanged. The comparison path builds one context and one prompt, then invokes each configured slot in sequence so both receive identical inputs and database trace writes remain ordered.
 
 **Resulting module/commit:** `backend/app/agent/compare.py`, `backend/app/api/routes/analysis.py`, and `backend/tests/test_model_comparison.py`. Changes were left uncommitted.
@@ -1103,6 +1165,8 @@
 **AI tool:** Codex
 
 **Summary of generated output:** Added authenticated repository data routes, the agent-run detail and trace routes, and a repository DELETE route using database cascades. Added response schemas for repository/index/file/memory/finding/trace data and tests for current index progress, browsing, file-reading errors, finding validation, agent trace ordering, ownership, and deletion counts.
+
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
 
 **Modified/rejected:** The optional code-review endpoint remains for later by user direction. Supplementary-document tables are not yet present in the database schema, so the deletion test verifies their absence and directly verifies zero remaining rows in every existing dependent table from section 28.3. No supplementary-document ingestion or schema was added.
 
@@ -1118,6 +1182,8 @@
 
 **Summary of generated output:** Added a typed fetch client, TanStack Query hooks, React Router protected routes, React Hook Form and Zod authentication forms, a repository dashboard, ZIP upload with progress and client-side size validation, an authorized GitHub repository picker with branch selection, and a polling indexing status screen. Added the narrow GitHub branch-list route needed by the picker and configured the Vite development proxy for the real backend.
 
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
+
 **Modified/rejected:** The backend does not yet expose an import retry endpoint, so the FAILED screen states that retry is unavailable. The workspace and other later frontend screens were not added. The two PostgreSQL/pgvector tests remain opt-in and skipped without PRISM_TEST_POSTGRES_URL.
 
 **Resulting module/commit:** `frontend/src/api/`, `frontend/src/app/`, `frontend/src/pages/`, `frontend/src/components/common/`, frontend build configuration and dependencies, `backend/app/api/routes/github.py`, `backend/tests/test_github_integration.py`, `docker-compose.yml`, `README.md`, and `prompts.md`. Changes are uncommitted.
@@ -1131,6 +1197,8 @@
 **AI tool:** Codex
 
 **Summary of generated output:** Extended the typed API client and TanStack Query hooks; added protected workspace, memory, findings, and settings routes; built repository tree, analysis, evidence, and trace panels; rendered the four structured analysis responses and side-by-side peer comparison; added Save Finding for flow and impact results; resolved current-index evidence links for memory and findings while marking stale IDs without current details. Cleared cached repository data on login and sign-out so it cannot carry across accounts.
+
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
 
 **Modified/rejected:** No backend endpoint or schema was changed. The workspace uses the agent-run IDs, tool timestamps, and evidence resolver supplied by the preceding branch patches. The optional code-review UI and later evaluation work remain out of scope. A live authenticated browser walkthrough was not performed in this phase.
 
@@ -1146,6 +1214,8 @@
 
 **Summary of generated output:** Added a coherent FastAPI, SQLAlchemy, PostgreSQL-ready, JWT-protected CRUD backend and React frontend under `backend/tests/fixtures/demo_repo/`, with its own API/authorization tests. Added 25 recorded questions, an offline evaluation runner using Prism's real ingestion, retrieval, and bounded controller with deterministic hash embeddings and `MockProvider`, a JSON report, and adversarial threshold tests. Corrected two grounding defects exposed by the benchmark: incompatible citations in deterministic flow fallback and false `NONE` evidence quality when a queried exact symbol is present inside a merged chunk.
 
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
+
 **Modified/rejected:** The original smaller fixtures remain for their established regression tests. No new product capability or LLM judge was added. The benchmark uses deterministic local hash embeddings, so its retrieval metrics are not a measurement of the production `BAAI/bge-small-en-v1.5` model. The full backend suite and frontend Vitest could not be rerun with normal temporary-directory/process permissions after automatic approval review reported a usage limit. README remains at Phase 25 status pending that verification.
 
 **Resulting module/commit:** `backend/tests/fixtures/demo_repo/`, `backend/tests/eval/`, `backend/app/agent/investigations/flow_trace.py`, `backend/app/evidence/quality.py`, `backend/tests/test_context_builder.py`, `README.md`, and `prompts.md`. Changes are uncommitted.
@@ -1159,6 +1229,8 @@
 **AI tool:** Codex
 
 **Summary of generated output:** Added 17 security cases covering all registered tools and repository routes, comment injection through real Q&A prompts, synthetic secret/binary exclusion from every stored table and model message, both model slots' bounded payloads, similarly named repository isolation, nested Zip Slip and symlink paths, highly compressed archive size rejection, credential-key redaction, persisted-table inventory, and an AST check for SQL interpolation. Added escaped-content frontend XSS coverage and extended DELETE counts to messages and legacy memory_items. Documented the threat-to-test mapping and actual privacy-policy table inventory.
+
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
 
 **Modified/rejected:** Fixed web-tool execution to enforce repository ownership and file reading to reject secret filenames even in artificially seeded rows. Kept the existing ZIP hard limits; no new compression-ratio policy, product feature, or migration was introduced. The blocked Phase 26 verification is now complete: all temporary-directory tests, evaluation thresholds, demo API tests, and both frontend builds pass. The sandbox-created Phase 26 temporary directory was removed. Supplementary-document tables and installation disconnect remain unimplemented and are explicitly identified in SECURITY_REVIEW.md.
 
@@ -1174,8 +1246,26 @@
 
 **Summary of generated output:** Added backend and frontend health checks alongside the existing PostgreSQL check, `unless-stopped` restart policies, configurable PostgreSQL credentials, a database-query readiness loop before Alembic, a multi-stage static frontend Dockerfile with an Nginx API proxy and Compose override, and a Python stack smoke test covering health, registration, fixture ZIP import, grounded Q&A, and trace persistence. Documented both frontend paths and environment groups in README.md.
 
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
+
 **Modified/rejected:** The first smoke question was too broad for the existing evidence gate and returned 422 without a model call. The smoke script now asks about the fixture's exact `create_access_token` symbol. No retrieval threshold, bound, product feature, or hosting-provider dependency was changed. The smoke test leaves its throwaway account and repository for inspection.
 
 **Resulting module/commit:** `docker-compose.yml`, `docker-compose.prod.yml`, `.env.example`, `backend/entrypoint.sh`, `backend/scripts/smoke_test_stack.py`, `frontend/Dockerfile.prod`, `frontend/nginx.conf`, `README.md`, and `prompts.md`.
 
 **Test result:** Development and static frontend Compose configurations validated. The complete backend suite passed with 311 passed and 2 opt-in PostgreSQL/pgvector tests skipped; frontend Vitest passed 40 tests and the main frontend build passed outside Docker. `python backend/scripts/smoke_test_stack.py` passed against the final built three-service stack with all services healthy, fixture index `READY`, grounded Q&A, and persisted trace. One preceding attempt recorded a selected-model `ConnectError` and returned 502; the retry passed without a code change. PostgreSQL reported Alembic revision 0014. The static frontend image built, became healthy under its Compose override, and served both the SPA page and proxied `/api/health`. The development frontend stack was restored afterward.
+
+### 2026-09-29 - Phase 29 documentation and acceptance review
+
+**Prompt:** Review `PRISM_SPEC.md` sections 3, 5, 34, and 35, current README and phase log, and Git history. Rewrite README for the implemented system, fill missing phase-log fields only with verifiable facts or manual placeholders, create a 60-item acceptance checklist with evidence or honest gaps, and write a seven-beat demo script against the current fixture and UI. Preserve existing behavior and keep tests passing.
+
+**AI tool:** Codex
+
+**Summary of generated output:** Replaced the phase-by-phase README with architecture, setup, feature, verification, evaluation, and current-limit documentation. Reviewed all logged phases against available Git history, inserted explicit manual placeholders where personal acceptance or rejection decisions could not be verified, added a 60-item acceptance checklist, and wrote a demo script using the current fixture, UI, endpoints, and live prerequisites.
+
+**Accepted:** [MANUAL - fill in if relevant; personal acceptance cannot be verified from repository history.]
+
+**Modified/rejected:** The `Status: Phase 29 complete - MVP` line was withheld because live GitHub/model/web and recorded-demo checks remain manual, and supplementary-document tables and installation disconnect are absent. The checklist records these gaps instead of treating documentation as proof of implementation.
+
+**Resulting module/commit:** `README.md`, `prompts.md`, `backend/ACCEPTANCE_CHECKLIST.md`, and `backend/DEMO_SCRIPT.md`. No commit was created in this phase.
+
+**Test result:** The complete backend suite passed with 357 passed and 2 opt-in PostgreSQL/pgvector cases skipped. Frontend Vitest passed 40 tests and `npm run build` passed. `docker compose config --quiet` passed. A local validation found all 60 checklist numbers in sequence and all required fields present in every phase entry. Live GitHub, web-search, and final recorded-demo steps were not performed in this documentation phase.

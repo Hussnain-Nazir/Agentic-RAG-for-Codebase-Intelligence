@@ -1,61 +1,85 @@
 # Prism - Agentic RAG for Codebase Intelligence
 
-Prism is an agentic RAG platform for understanding, navigating, tracing, and analyzing software repositories. It combines deterministic repository structure, hybrid retrieval, bounded tool execution, persistent memory, and evidence-grounded model reasoning to answer repository-level questions without sending an entire repository to a model.
+Prism indexes a software repository and answers questions with file and line evidence. It accepts a read-only GitHub App installation or a ZIP upload, parses Python, JavaScript, TypeScript, JSX, and TSX with Tree-sitter, stores local embeddings in PostgreSQL with pgvector, and combines semantic, lexical, and symbol retrieval. One bounded controller selects tools and invokes only the model slot chosen by the user. Prism reads and analyzes repositories; it does not edit them.
 
-Phase 17 replaces the scaffold with Prism's single bounded AgentController. It performs deterministic task classification, zero-model direct routing, hook-wrapped tool execution, repository and session authorization, memory retrieval, evidence-context construction, conditional external search, selected-slot model invocation, bounded structured-output repair, citation validation, eligible memory writes, and complete trace persistence.
+The tested full-stack pattern is FastAPI with React and Vite. The practical target is about 2,000 indexable files. Larger indexes receive a warning; ZIP, extracted-size, raw-file-count, and individual-file limits remain hard bounds. See [PRISM_SPEC.md](PRISM_SPEC.md) for the precise scope and [backend/ACCEPTANCE_CHECKLIST.md](backend/ACCEPTANCE_CHECKLIST.md) for what has been verified and what still needs a live demonstration.
 
-Phase 18 completes the backend Codebase Q&A vertical slice. Repository questions use a versioned, injection-aware runtime prompt, the selected model slot, schema and citation validation, and the authenticated `POST /repositories/{id}/ask` endpoint. Requests with no repository evidence return 422 without a model call, and answers whose citations are all invalid are downgraded and rejected as ungrounded.
+## Architecture
 
-Phase 19 completes the backend multi-file flow-tracing slice. A bounded feature investigation follows exact symbols through stored references and related evidence, records every tool observation, preserves unresolved transitions rather than fabricating links, and serves validated results through `POST /repositories/{id}/flow-trace`.
+```mermaid
+flowchart TD
+    GH["GitHub App"] --> RS["RepositorySource"]
+    ZIP["ZIP Upload"] --> RS
+    RS --> ING["Ingestion Pipeline"]
+    ING --> TS["Tree-sitter Parsing"]
+    TS --> CHK["Code-Aware Chunking"]
+    CHK --> EMB["Local Embeddings"]
+    EMB --> PG["PostgreSQL + pgvector"]
+    PG --> HR["Hybrid Retrieval"]
+    HR --> SEM["Semantic"]
+    HR --> LEX["Lexical / BM25"]
+    HR --> SYM["Symbol"]
+    SEM --> EV["Evidence Selection"]
+    LEX --> EV
+    SYM --> EV
+    EV --> SKM["Skills + Memory + Plugins"]
+    SKM --> AC["Bounded Agent Controller"]
+    AC --> MAB{"Model A OR Model B"}
+    MAB --> SV["Structured Validation"]
+    SV --> GR["Grounded Response"]
+    GR --> MT["Memory + Trace Persistence"]
+```
 
-Phase 20 adds backend change-impact analysis and GitHub incremental synchronization. Change-impact requests use bounded symbol, reference, related-file, and hybrid-search tools to separate evidenced definitions from likely downstream consumers at `POST /repositories/{id}/change-impact`. `POST /repositories/{id}/sync` creates a new index version, copies unchanged indexed rows without parsing or embedding them again, processes changed and new files through the shared ingestion stages, excludes deleted files from the new version, and invalidates memory tied to changed or deleted evidence.
+The diagram mirrors section 5 of the specification. The actual lexical implementation uses PostgreSQL full-text search, not a separate BM25 service. GitHub supplies content during import and sync; ordinary questions use Prism's stored index. Both sources feed `backend/app/ingestion/`. Local embeddings are separate from Model A and Model B.
 
-Phase 24 adds the first five frontend screens: authentication, dashboard, repository import by GitHub or ZIP, GitHub repository and branch selection, and indexing status. The frontend uses typed API calls and polls active index states. A repository branch-list endpoint exposes the existing GitHub client capability to the picker.
+## Capabilities and code locations
 
-Phase 25 adds the repository workspace with file and symbol browsing, Ask, Flow Trace, Change Impact, Architecture, peer Model Comparison, evidence file viewing, and an expandable Agent Trace. Repository Memory, saved Findings, and GitHub connection settings are available from the frontend. Memory and finding evidence links resolve against the current index; stale IDs remain visible without a current file link.
+| Capability | Current implementation |
+| --- | --- |
+| Codebase Q&A | `backend/app/agent/controller.py`, `backend/app/api/routes/analysis.py`, and the Ask tab in `frontend/src/components/workspace/AnalysisWorkspace.tsx` |
+| Multi-file Flow Trace | `backend/app/agent/investigations/flow_trace.py` and `POST /repositories/{id}/flow-trace`; unproven transitions remain unresolved |
+| Change Impact | `backend/app/agent/investigations/change_impact.py` and `POST /repositories/{id}/change-impact`; direct and likely indirect items are separate |
+| Architecture Explanation | `backend/app/tools/repository_tools.py`, `backend/app/agent/architecture.py`, and `GET /repositories/{id}/architecture` |
+| Model selection and explicit comparison | `backend/app/llm/`, `backend/app/agent/compare.py`, and the workspace model selector and Ask & Compare button; normal requests use one selected slot |
+| Skills and tools | `backend/app/tools/registry.py` registers 11 real tools; `backend/app/tools/repository_tools.py` holds repository and memory tools |
+| Memory | `backend/app/memory/service.py` stores session summaries, evidence-backed repository facts, and saved findings; the Memory and Findings workspace tabs display them |
+| Hooks and trace | `backend/app/tracing/hooks.py` persists `AgentRun`, `ToolCall`, and `ModelExecution` data; the Agent Trace tab renders the recorded steps |
+| File-reading plugin | `backend/app/plugins/file_reading/` reads bounded content from the current stored index |
+| Conditional web-search plugin | `backend/app/plugins/web_search/` handles external-documentation questions through `/ask`; ordinary repository Q&A does not search the web |
+| Grounding and validation | `backend/app/evidence/`, `backend/app/validation/`, and `backend/app/schemas/responses.py` build bounded context and validate schemas and citations |
 
-## Deployment and local development
+## Local setup with Docker Compose
 
-Prism runs as three services: PostgreSQL with pgvector and a persistent named volume, a FastAPI backend, and a React frontend. Compose waits for PostgreSQL health before starting the backend. The backend entrypoint verifies a database query, applies Alembic migrations, then starts Uvicorn. The frontend starts after the backend health check passes. Each service has a health check and an `unless-stopped` restart policy. No hosting provider is required; the same three services can run on any host that supports Docker Compose or equivalent services.
+Prerequisites: Docker with Compose, Python 3.11 or newer for local scripts/tests, and Node.js 20 or newer for local frontend work. A configured Model A or Model B slot is needed for generated answers and the stack smoke test. Both slots are needed for Compare Models. The first local embedding load may require downloading the configured sentence-transformers model.
 
-Prerequisites: Python 3.11 or newer, Node.js 20 or newer, and Docker with Docker Compose. Copy `.env.example` to `.env`, replace the sample `JWT_SECRET`, and keep credentials local. The sample database credentials in Compose are for local use; set separate credentials and a matching `DATABASE_URL` before staging deployment.
+1. Copy `.env.example` to `.env` (PowerShell: `Copy-Item .env.example .env`). Replace `JWT_SECRET` with a strong local secret. Set `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and a matching `DATABASE_URL`. The Compose backend connects to host `postgres`; a backend run directly on the host needs its own reachable database URL. Do not commit `.env` or credentials.
+2. Set `MODEL_A_NAME`, `MODEL_A_BASE_URL`, `MODEL_A_API_KEY` and/or the corresponding `MODEL_B_*` values for OpenAI-compatible `/chat/completions` endpoints. Set each slot's timeout as needed. The two slots are peers; Prism never falls back automatically.
+3. Run `docker compose config --quiet`, then `docker compose up -d --build`. The backend entrypoint waits for PostgreSQL, runs `alembic upgrade head`, and starts Uvicorn. Open `http://localhost:5173`; backend health is `http://localhost:8000/health`.
+4. Register in the UI, then use **Add Repository** to upload a ZIP or connect GitHub. Index status is shown after import. The demo source tree is `backend/tests/fixtures/demo_repo/`; package that directory's contents as a ZIP when importing it manually. `backend/tests/fixtures/demo-repo.zip` may also be used when present, but the tracked source tree is the canonical fixture.
 
-Environment configuration is grouped as follows:
+For a static frontend instead of the Vite development server, run `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`. The static frontend listens on port 5173 and proxies `/api` to the backend.
 
-- Database and authentication: `DATABASE_URL`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `JWT_SECRET`. Match the PostgreSQL variables to `DATABASE_URL`. Changing these variables does not reset credentials in an existing PostgreSQL volume.
-- GitHub App, when used: `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_CALLBACK_SUCCESS_URL`. The private key stays in the read-only `run/secrets/` mount.
-- Model peers: `MODEL_A_NAME`, `MODEL_A_BASE_URL`, `MODEL_A_API_KEY`, `MODEL_A_TIMEOUT`, and the corresponding `MODEL_B_*` variables. Configure at least one complete slot for the stack smoke test.
-- Indexing and web search: `EMBEDDING_MODEL_NAME`, `WEB_SEARCH_PROVIDER`, `WEB_SEARCH_API_KEY`, `SERPAPI_API_KEY`, `MAX_ZIP_SIZE_MB`, `MAX_FILE_SIZE_MB`, `MAX_EXTRACTED_SIZE_MB`, `MAX_EXTRACTED_FILES`, `MAX_CONCURRENT_INDEX_JOBS`.
+### GitHub App setup
 
-For local development, run `docker compose up -d --build`. Open the Vite frontend at `http://localhost:5173` and check the backend at `http://localhost:8000/health`. To run the backend and frontend directly, start PostgreSQL with `docker compose up -d postgres`, run `alembic upgrade head` and `uvicorn app.main:app --reload` from `backend/`, then run `npm ci` and `npm run dev` from `frontend/`. The Vite server proxies `/api` to the backend; set `VITE_DEV_API_TARGET` if it is not at `http://localhost:8000`.
+Create a GitHub App with read-only Contents and Metadata permissions and user authorization during installation. Point its callback to a publicly reachable backend URL ending in `/github/callback`; set `GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `GITHUB_APP_PRIVATE_KEY_PATH` in `.env`. Put the PEM key under `run/secrets/`, mounted read-only in Compose. Set `GITHUB_CALLBACK_SUCCESS_URL` to the frontend landing URL. Start Prism, sign in, choose **Connect GitHub**, authorize the fixture repository, select its branch in the picker, and import. The user-facing flow cannot be verified without a live GitHub App and reachable callback. Tokens and private keys remain server-side.
 
-For a static frontend deployment, run `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`. `frontend/Dockerfile.prod` builds the Vite bundle and serves it with Nginx on `http://localhost:5173`; Nginx proxies `/api` to the backend. The default Compose file remains the development server path. The static frontend can also be built without replacing the running development service with `docker compose -f docker-compose.yml -f docker-compose.prod.yml build frontend`.
+For external documentation search, set `SERPAPI_API_KEY` server-side. The web plugin runs only for an explicitly external/current-documentation question classified by the backend. A missing or failing provider is shown as a limitation. Do not place this key in frontend variables.
 
-Run `python backend/scripts/smoke_test_stack.py` to build and verify the development stack end to end, or add `--production` to verify the static frontend variant. The script creates a throwaway user and fixture repository, waits for `READY`, makes one Q&A request through a configured model slot, and checks its trace. It leaves those records in the database for inspection. It does not use GitHub or web search.
+### Run components directly
 
-For web-search development, set `SERPAPI_API_KEY` in `.env`. The key is server-side only and must never be placed in frontend configuration, logs, cached web-source rows, or model context. Prism calls SerpAPI only when the controller explicitly selects the external-document task path.
+From the repository root, start PostgreSQL with `docker compose up -d postgres`. The default Compose file does not publish port 5432, so add a local port mapping in a Compose override if running the backend on the host. Set a matching host-reachable `DATABASE_URL` for the backend process. From `backend/`, run `python -m pip install -r requirements.txt`, `alembic upgrade head`, and `uvicorn app.main:app --reload`. From `frontend/`, run `npm ci` and `npm run dev`. Vite proxies `/api` to `http://localhost:8000` by default; set `VITE_DEV_API_TARGET` when the backend is elsewhere.
 
-## API overview
+## Verification and evaluation
 
-The authenticated API covers repository import, browsing, index status, code analysis, memory, findings, agent traces, and repository deletion. See [PRISM_SPEC.md section 26](PRISM_SPEC.md#26-rest-api-specification) for the endpoint contracts and error cases. Evidence-backed code review remains optional and is not exposed yet.
+- From `backend/`, run `pytest -p no:cacheprovider`. If local Windows temporary directories are inaccessible, pass the explicit `tests/test_*.py` files plus `tests/eval/test_evaluation_thresholds.py` and `tests/fixtures/demo_repo/backend/tests/test_api.py`, as described in [backend/SECURITY_REVIEW.md](backend/SECURITY_REVIEW.md).
+- From `frontend/`, run `npm test` and `npm run build`.
+- From `backend/`, run `python tests/eval/run_evaluation.py` and `pytest -p no:cacheprovider tests/eval/test_evaluation_thresholds.py`. The 26-question [evaluation report](backend/tests/eval/report.json) uses deterministic hash embeddings and MockProvider; it is not a live-model score. PostgreSQL/pgvector integration cases are opt-in via `PRISM_TEST_POSTGRES_URL`.
+- From the repository root, run `python backend/scripts/smoke_test_stack.py` for the three-service development stack, or add `--production` for the static frontend variant. It builds the stack, creates a disposable account and ZIP repository, waits for READY, asks a grounded Q&A question through a configured real model, and checks the trace. It leaves those records for inspection.
 
-## Evaluation
+The recorded deterministic evaluation reports 100% Hit@12, citation validity, ordered flow-step recall, and direct and indirect impact recall across 26 questions, with zero invalid references. The historical core-logic coverage measurement is 92.52% in [backend/tests/eval/COVERAGE.md](backend/tests/eval/COVERAGE.md). A runnable seven-beat live walkthrough is in [backend/DEMO_SCRIPT.md](backend/DEMO_SCRIPT.md).
 
-Phase 26 evaluation work is recorded in [the evaluation report](backend/tests/eval/report.json) and [coverage report](backend/tests/eval/COVERAGE.md). The 26-question deterministic demo-repository run measured Hit@12 at 100%, citation validity at 100%, ordered flow-step recall at 100%, and indirect-impact precision at 100%. The historical core coverage measurement is 92.52%.
+## Current limits and acceptance status
 
-## Security review
+The complete acceptance review is in [backend/ACCEPTANCE_CHECKLIST.md](backend/ACCEPTANCE_CHECKLIST.md). Supplementary-document tables and a user-facing GitHub installation disconnect are not implemented. The final recorded live demo and any environment-specific GitHub, provider, and PostgreSQL checks still require a person. The current GitHub sync endpoint runs synchronously while recording index stages, despite the specification's background-job plan.
 
-[SECURITY_REVIEW.md](backend/SECURITY_REVIEW.md) maps every section 28.1 threat and section 28.3 privacy requirement to automated checks. Phase 27 adds exhaustive route/tool ownership checks, cross-repository isolation, prompt-injection and secret-exclusion tests, ZIP edge cases, bounded model-payload checks, escaped-content XSS coverage, and extended deletion verification. Web-tool execution now checks repository ownership, and file reading also rejects secret filenames in seeded rows.
-
-## [MANUAL] GitHub App setup
-
-1. Create a GitHub App with read-only Contents and Metadata permissions. Disable webhooks unless a later phase explicitly adds them.
-2. Enable **Request user authorization (OAuth) during installation**. Set the callback URL to the public backend URL ending in `/github/callback`, for example `https://<tunnel-host>/github/callback`.
-3. Generate a client secret and private key. Put the PEM file under `run/secrets/` and configure `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_CLIENT_ID`, and `GITHUB_CLIENT_SECRET` in `.env`.
-4. Start Prism with `docker compose up -d --build`. For localhost.run, keep `ssh -R 80:localhost:8000 nokey@localhost.run` running and confirm `https://<tunnel-host>/health` returns `{"status":"ok"}`.
-5. Log in to Prism, authorize Swagger with the Prism bearer token, call `GET /github/install-url`, and open the returned state-bearing URL in the browser. After installation, GitHub returns through the callback and Prism redirects to the frontend.
-6. Call `GET /github/installations` with the Prism bearer token. Use the returned Prism installation UUID, not GitHub's numeric installation ID, in `GET /github/installations/{installation_id}/repositories`.
-
-Installation state is short-lived, single-use, and bound to the authenticated Prism user who requested the install URL. The callback verifies through a GitHub user access token that the installation is accessible to the GitHub user before persisting it. User and installation tokens are not stored. Do not place the private key, client secret, installation tokens, or user tokens in the frontend, repository, logs, or model context.
-
-Status: Phase 28 complete
+Status: Phase 28 complete; Phase 29 acceptance review pending
