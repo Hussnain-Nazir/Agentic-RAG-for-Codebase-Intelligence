@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  Index a repository, then ask questions, trace multi-file flows, and assess change impact —<br/>
+  Index a repository, then ask questions, trace multi-file flows, and assess change impact -<br/>
   with every claim tied to validated file, symbol, and line evidence.
 </p>
 
@@ -29,29 +29,30 @@
 ## Contents
 
 1. [Overview](#overview)
-2. [Core capabilities](#core-capabilities)
-3. [System architecture](#system-architecture)
-4. [How PRISM works](#how-prism-works)
-5. [Agentic RAG architecture](#agentic-rag-architecture)
-6. [Flagship workflows](#flagship-workflows)
-7. [Evidence and citation grounding](#evidence-and-citation-grounding)
-8. [Ask vs Ask and Compare](#ask-vs-ask-and-compare)
-9. [Technology stack](#technology-stack)
-10. [Repository structure](#repository-structure)
-11. [Getting started](#getting-started)
-12. [GitHub integration](#github-integration)
-13. [Configuration](#configuration)
-14. [API overview](#api-overview)
-15. [Persistence architecture](#persistence-architecture)
-16. [Evaluation and quality assurance](#evaluation-and-quality-assurance)
-17. [Security and privacy](#security-and-privacy)
-18. [Supported scope](#supported-scope)
-19. [Deployment](#deployment)
-20. [Development and testing](#development-and-testing)
-21. [Design principles](#design-principles)
-22. [Limitations](#limitations)
-23. [Non-goals and future work](#non-goals-and-future-work)
-24. [License](#license)
+2. [Demo](#demo)
+3. [Core capabilities](#core-capabilities)
+4. [System architecture](#system-architecture)
+5. [How PRISM works](#how-prism-works)
+6. [Agentic RAG architecture](#agentic-rag-architecture)
+7. [Flagship workflows](#flagship-workflows)
+8. [Evidence and citation grounding](#evidence-and-citation-grounding)
+9. [Ask vs Ask and Compare](#ask-vs-ask-and-compare)
+10. [Technology stack](#technology-stack)
+11. [Repository structure](#repository-structure)
+12. [Getting started](#getting-started)
+13. [GitHub integration](#github-integration)
+14. [Configuration](#configuration)
+15. [API overview](#api-overview)
+16. [Persistence architecture](#persistence-architecture)
+17. [Evaluation and quality assurance](#evaluation-and-quality-assurance)
+18. [Security and privacy](#security-and-privacy)
+19. [Supported scope](#supported-scope)
+20. [Deployment](#deployment)
+21. [Development and testing](#development-and-testing)
+22. [Design principles](#design-principles)
+23. [Limitations](#limitations)
+24. [Non-goals and future work](#non-goals-and-future-work)
+25. [License](#license)
 
 ---
 
@@ -68,6 +69,12 @@ PRISM addresses this in three ways:
 - **A bounded controller and a validation gate.** A single custom controller selects tools within hard limits, builds a bounded evidence context, calls exactly one model, and then validates the structured output and every citation against the evidence that was actually sent. Unsupported citations are removed and confidence is downgraded.
 
 PRISM analyzes repositories. It does not modify them.
+
+---
+
+## Demo
+
+[Click here to watch the video - Prism Demo](https://drive.google.com/file/d/16sAkYTmFAVgeJP1HIQzgZXoiIku-Tkx9/view?usp=drive_link)
 
 ---
 
@@ -166,7 +173,8 @@ sequenceDiagram
         T->>DB: Semantic, lexical, symbol search and structural expansion
         C->>C: Build bounded evidence context and grade quality
         alt Evidence quality NONE
-            C-->>API: "Insufficient repository evidence" (no model call)
+            C-->>API: No model call, run recorded as insufficient evidence
+            Note over API,FE: ask, flow-trace and change-impact answer HTTP 422
         else Usable evidence
             C->>M: One call with structured-output schema
             M-->>C: Structured answer
@@ -176,7 +184,7 @@ sequenceDiagram
         end
     end
     C->>DB: Persist AgentRun, ToolCalls, ModelExecutions, memory
-    API-->>FE: agent_run_id and validated response
+    API-->>FE: HTTP 422 error, or agent_run_id with the validated response
     FE-->>U: Answer, evidence chips, Agent Trace
 ```
 
@@ -259,7 +267,7 @@ Scores are normalized and combined with fixed weights (semantic 0.5, lexical 0.3
 
 **Conditional external research.** `EXTERNAL_DOC_QUERY` is routed through the same `/ask` endpoint. `search_web` results become `WEB` evidence, distinct from repository evidence in the API and UI. A missing or failing provider is reported as a limitation.
 
-**Fallback behavior.** There is no automatic model fallback. If the selected slot fails, the failure is traced and returned. When evidence is `NONE`, PRISM returns an explicit "Insufficient repository evidence" result instead of generating an answer. Multi-part questions that are only partly supported get a per-subquestion limitation.
+**Fallback behavior.** There is no automatic model fallback. If the selected slot fails, the failure is traced and returned. When evidence is `NONE`, the controller skips the model call and records an "Insufficient repository evidence" result. The `ask`, `flow-trace` and `change-impact` endpoints then answer with HTTP 422 and an error detail carrying the `agent_run_id`, not a generated answer. Multi-part questions that are only partly supported get a per-subquestion limitation.
 
 ---
 
@@ -301,7 +309,7 @@ The same checks are applied to per-step citations in Flow Trace and per-item cit
 
 **Ask & Compare.** `POST /repositories/{id}/compare-models` takes only a question. PRISM builds one evidence context, then sends the identical prompt and evidence to Model A and Model B and validates each result independently (schema status, citation counts, rejection reasons, latency, and token usage where the provider reports it). The response holds one `ModelResult` per slot and does not use a third model to judge. If a slot is unconfigured or fails, that slot's result carries the error and the other slot's result is still returned. If the evidence is `NONE`, comparison is refused rather than comparing two ungrounded answers.
 
-The purpose is to compare models on the same grounded evidence, not to choose an answer automatically.
+The purpose is to compare models on the same grounded evidence, not to choose an answer automatically. In the demo configuration the two slots hold `gpt-5-mini` and `gpt-4.1-mini`, so a comparison shows how the two models answer from identical retrieved evidence.
 
 ---
 
@@ -487,6 +495,19 @@ Declared in settings and `.env.example` but **not currently read anywhere in the
 
 `GET /models/config` (authenticated) returns configured model names only, never URLs or keys.
 
+### Models used in the demo
+
+The two model slots are configuration, not code. The demo and recorded runs used two OpenAI models through the OpenAI API, which exposes an OpenAI-compatible chat-completions endpoint:
+
+| Model | Provider | Role |
+| --- | --- | --- |
+| `gpt-5-mini` | OpenAI | One of the two peer model slots (A or B) |
+| `gpt-4.1-mini` | OpenAI | The other peer model slot |
+
+Both slots are equal, so either model can be assigned to either slot through the `MODEL_A_*` and `MODEL_B_*` variables. Ask & Compare sends the same evidence and prompt to both. Swapping in any other OpenAI-compatible model or provider, including a self-hosted endpoint, needs only a configuration change. Embeddings are separate and run locally (`BAAI/bge-small-en-v1.5`), so no embedding calls go to OpenAI.
+
+The automated test suite and the deterministic evaluation use `MockProvider` and never call these models. Only the smoke test and live demo runs call the configured models.
+
 ---
 
 ## API overview
@@ -506,6 +527,8 @@ The backend serves interactive OpenAPI docs at `/docs`. Except for health, regis
 | Models | `GET /models/config` |
 
 Analysis responses include an `agent_run_id` that can be passed to the agent-run endpoints to inspect recorded tool calls and model executions.
+
+Analysis endpoints return HTTP 422 when retrieved evidence is insufficient (`ask`, `flow-trace`, `change-impact`, and `compare-models`) or when the model output fails grounding validation, 502 when the model provider fails, and 503 when the selected model slot is not configured. Insufficient-evidence errors are not generated answers.
 
 ---
 
@@ -576,7 +599,7 @@ These figures come from [`backend/tests/eval/report.json`](backend/tests/eval/re
 - `frontend/src/**/*.test.tsx`: workspace behavior including model-slot persistence, external-evidence display, and escaped rendering of script-bearing content.
 - Opt-in PostgreSQL/pgvector integration cases, enabled with `PRISM_TEST_POSTGRES_URL`.
 
-Recorded results from the last full run (2026-09-26): 301 backend tests passed and 2 opt-in tests skipped; 21 frontend tests passed; core-module coverage 92.52% ([`COVERAGE.md`](backend/tests/eval/COVERAGE.md)). Those are historical figures; re-run the commands below for current numbers. Item-by-item acceptance status, including what still needs a live check, is in [`backend/ACCEPTANCE_CHECKLIST.md`](backend/ACCEPTANCE_CHECKLIST.md).
+Recorded results in the development log at the Phase 29 review: 357 backend tests passed and 2 opt-in tests skipped; 40 frontend tests passed. Core-module coverage of 92.52% was measured on 2026-09-26, before the last test additions ([`COVERAGE.md`](backend/tests/eval/COVERAGE.md)). These are historical figures, so re-run the commands below for current numbers. Item-by-item acceptance status, including what still needs a live check, is in [`backend/ACCEPTANCE_CHECKLIST.md`](backend/ACCEPTANCE_CHECKLIST.md).
 
 ---
 
@@ -596,7 +619,7 @@ The full threat review, with the test that covers each item, is in [`backend/SEC
 
 **What this does not guarantee.**
 
-- Repository excerpts are sent to whichever model endpoints you configure. If those are third-party hosted services, that code leaves your infrastructure. Use a self-hosted OpenAI-compatible endpoint if that is unacceptable.
+- Repository excerpts are sent to whichever model endpoints you configure. In the demo configuration those are OpenAI-hosted models, so the selected excerpts leave your infrastructure for OpenAI. Use a self-hosted OpenAI-compatible endpoint if that is unacceptable.
 - The secret filter works on filenames, not content. A secret hard-coded inside a source file is not detected.
 - Revoking GitHub access keeps the existing read-only index; only explicit repository deletion removes it. A user-facing installation-disconnect endpoint is not implemented.
 - The GitHub token cache is process-local. No rate limiting, TLS termination, or CORS policy is configured in the application; these belong to your deployment.
@@ -670,7 +693,7 @@ The smoke test builds the stack, creates a disposable account and ZIP repository
 
 ## Design principles
 
-- **Evidence over speculation.** Answers are structured objects whose claims point at retrieved evidence, and unsupported answers are downgraded or replaced with an explicit "insufficient evidence" result.
+- **Evidence over speculation.** Answers are structured objects whose claims point at retrieved evidence, and unsupported answers are downgraded, and a request with no usable evidence is refused with an explicit insufficient-evidence error instead of a generated answer.
 - **Retrieval before generation.** The model is called once, after retrieval, graph investigation, and evidence grading have finished.
 - **Deterministic validation wherever possible.** Task classification, tool selection, bounds, and citation checks are code, not model judgments. The evaluation uses no LLM judge.
 - **Never fabricate structure.** Flow steps and impact items must be backed by observed relationships; otherwise they are left unresolved or dropped.
