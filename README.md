@@ -89,7 +89,7 @@ PRISM analyzes repositories. It does not modify them.
 | **Repository ingestion** | GitHub App import (with branch selection) or ZIP upload, both through one shared normalization and indexing pipeline. Incremental sync for GitHub repositories compares blob SHAs. | `backend/app/ingestion/`, `backend/app/sources/` |
 | **Hybrid retrieval** | Semantic + lexical + symbol retrieval, overlap deduplication, adjacent-chunk merging, and structural expansion. | `backend/app/retrieval/` |
 | **Evidence and citation validation** | Bounded evidence context; deterministic checks on evidence ID, file path, line range, repository, and index version. | `backend/app/evidence/`, `backend/app/validation/` |
-| **Model slots and comparison** | Two equal, independently configured OpenAI-compatible model slots (A and B). A normal request uses the selected slot only; *Ask & Compare* runs both against the same evidence and prompt. | `backend/app/llm/`, `backend/app/agent/compare.py` |
+| **Model slots and comparison** | Two equal, independently configured model slots: Model A is `gpt-5-mini` and Model B is `gpt-4.1-mini`, both from OpenAI through its OpenAI-compatible API. A normal request uses the selected slot only; *Ask & Compare* runs both against the same evidence and prompt. | `backend/app/llm/`, `backend/app/agent/compare.py` |
 | **Conditional web search** | For questions classified as external or current documentation, a SerpAPI-backed plugin adds `WEB` evidence, cached for 24 hours. Ordinary repository questions never search the web. | `backend/app/plugins/web_search/` |
 | **File reading plugin** | Bounded reads (up to 4,000 lines) of files and line ranges from the stored index, with a secret-filename denylist. | `backend/app/plugins/file_reading/` |
 | **Memory and findings** | Evidence-backed repository facts, session summaries, and user-saved findings. Repository memory is marked stale when its source files change. | `backend/app/memory/` |
@@ -125,7 +125,7 @@ flowchart LR
 
     subgraph External["External services"]
         GH["GitHub App API"]
-        LLM["Model A / Model B<br/>OpenAI-compatible"]
+        LLM["Model A: gpt-5-mini<br/>Model B: gpt-4.1-mini<br/>OpenAI API"]
         WEB["SerpAPI<br/>conditional"]
     end
 
@@ -309,7 +309,7 @@ The same checks are applied to per-step citations in Flow Trace and per-item cit
 
 **Ask & Compare.** `POST /repositories/{id}/compare-models` takes only a question. PRISM builds one evidence context, then sends the identical prompt and evidence to Model A and Model B and validates each result independently (schema status, citation counts, rejection reasons, latency, and token usage where the provider reports it). The response holds one `ModelResult` per slot and does not use a third model to judge. If a slot is unconfigured or fails, that slot's result carries the error and the other slot's result is still returned. If the evidence is `NONE`, comparison is refused rather than comparing two ungrounded answers.
 
-The purpose is to compare models on the same grounded evidence, not to choose an answer automatically. In the demo configuration the two slots hold `gpt-5-mini` and `gpt-4.1-mini`, so a comparison shows how the two models answer from identical retrieved evidence.
+The purpose is to compare models on the same grounded evidence, not to choose an answer automatically. Model A is `gpt-5-mini` and Model B is `gpt-4.1-mini`, so a comparison shows how the two OpenAI models answer from identical retrieved evidence.
 
 ---
 
@@ -323,7 +323,7 @@ The purpose is to compare models on the same grounded evidence, not to choose an
 | Vector and text search | pgvector (cosine, IVFFlat), PostgreSQL full-text search (`tsvector`, GIN), `pg_trgm` |
 | Code analysis | Tree-sitter with Python, JavaScript, and TypeScript/TSX grammars |
 | Embeddings | `sentence-transformers` (default `BAAI/bge-small-en-v1.5`, CPU PyTorch in the container) |
-| AI / LLM | Two OpenAI-compatible chat-completions slots with JSON-schema structured output; a deterministic `MockProvider` for tests |
+| AI / LLM | Model A `gpt-5-mini` and Model B `gpt-4.1-mini` (OpenAI) behind a provider-agnostic, OpenAI-compatible chat-completions client with JSON-schema structured output; a deterministic `MockProvider` for tests |
 | Repository integration | GitHub App (read-only), RS256 app JWTs, installation tokens; ZIP upload |
 | External research | SerpAPI (conditional) |
 | Auth | bcrypt password hashing, HS256 JWT access tokens (60 minutes) |
@@ -411,7 +411,7 @@ Edit `.env`:
 
 1. Replace `JWT_SECRET` with a long random value. The backend refuses to start without a usable secret.
 2. Set `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and a matching `DATABASE_URL`. Inside Compose the database host is `postgres`.
-3. Set `MODEL_A_NAME`, `MODEL_A_BASE_URL`, `MODEL_A_API_KEY` (and/or the `MODEL_B_*` equivalents) for any OpenAI-compatible `/chat/completions` endpoint.
+3. Set the model slots: `MODEL_A_NAME=gpt-5-mini` and `MODEL_B_NAME=gpt-4.1-mini`, each with its `_BASE_URL` (the OpenAI API base URL) and `_API_KEY`. The client appends `/chat/completions` to the base URL you give it.
 4. Optional: GitHub App settings ([GitHub integration](#github-integration)) and `SERPAPI_API_KEY` for external documentation search.
 
 Never commit `.env` or any key material. The Compose file loads `.env.example` first and then `.env` (if present), so values in `.env` win.
@@ -484,7 +484,7 @@ All configuration is server-side, loaded by `backend/app/config.py` from environ
 | --- | --- | --- |
 | Database | `DATABASE_URL`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | `DATABASE_URL` uses the `postgresql+asyncpg` driver. |
 | Auth | `JWT_SECRET` | Required at startup. |
-| Model A / Model B | `MODEL_{A,B}_NAME`, `_BASE_URL`, `_API_KEY`, `_TIMEOUT` | Peer slots; timeout defaults to 60 seconds. A slot is available only when name, URL, and key are all set. |
+| Model A / Model B | `MODEL_{A,B}_NAME`, `_BASE_URL`, `_API_KEY`, `_TIMEOUT` | Peer slots, `gpt-5-mini` (A) and `gpt-4.1-mini` (B). Timeout defaults to 60 seconds. A slot is available only when name, URL, and key are all set. |
 | Embeddings | `EMBEDDING_MODEL_NAME` | Default `BAAI/bge-small-en-v1.5`. The vector column is 384-dimensional, so a replacement model must produce 384-dimensional vectors or require a migration. |
 | GitHub App | `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_CALLBACK_SUCCESS_URL` | See [GitHub integration](#github-integration). |
 | Web search | `SERPAPI_API_KEY` | Read by the SerpAPI provider. |
@@ -495,18 +495,18 @@ Declared in settings and `.env.example` but **not currently read anywhere in the
 
 `GET /models/config` (authenticated) returns configured model names only, never URLs or keys.
 
-### Models used in the demo
+### Models
 
-The two model slots are configuration, not code. The demo and recorded runs used two OpenAI models through the OpenAI API, which exposes an OpenAI-compatible chat-completions endpoint:
+PRISM runs on two OpenAI models, one per model slot:
 
-| Model | Provider | Role |
+| Slot | Model | Provider |
 | --- | --- | --- |
-| `gpt-5-mini` | OpenAI | One of the two peer model slots (A or B) |
-| `gpt-4.1-mini` | OpenAI | The other peer model slot |
+| Model A | `gpt-5-mini` | OpenAI |
+| Model B | `gpt-4.1-mini` | OpenAI |
 
-Both slots are equal, so either model can be assigned to either slot through the `MODEL_A_*` and `MODEL_B_*` variables. Ask & Compare sends the same evidence and prompt to both. Swapping in any other OpenAI-compatible model or provider, including a self-hosted endpoint, needs only a configuration change. Embeddings are separate and run locally (`BAAI/bge-small-en-v1.5`), so no embedding calls go to OpenAI.
+A normal Ask request uses the slot the user selects. Ask & Compare sends the same evidence and prompt to both. The slots are read from configuration and the client speaks the OpenAI-compatible chat-completions protocol, so the code does not hard-code these models. Embeddings are separate and run locally (`BAAI/bge-small-en-v1.5`), so no embedding calls go to OpenAI.
 
-The automated test suite and the deterministic evaluation use `MockProvider` and never call these models. Only the smoke test and live demo runs call the configured models.
+The automated test suite and the deterministic evaluation use `MockProvider` and never call these models. Only the smoke test and live runs call them.
 
 ---
 
@@ -619,7 +619,7 @@ The full threat review, with the test that covers each item, is in [`backend/SEC
 
 **What this does not guarantee.**
 
-- Repository excerpts are sent to whichever model endpoints you configure. In the demo configuration those are OpenAI-hosted models, so the selected excerpts leave your infrastructure for OpenAI. Use a self-hosted OpenAI-compatible endpoint if that is unacceptable.
+- Repository excerpts are sent to whichever model endpoints you configure. PRISM runs on OpenAI-hosted models (`gpt-5-mini` and `gpt-4.1-mini`), so the selected excerpts leave your infrastructure for OpenAI. Use a self-hosted OpenAI-compatible endpoint if that is unacceptable.
 - The secret filter works on filenames, not content. A secret hard-coded inside a source file is not detected.
 - Revoking GitHub access keeps the existing read-only index; only explicit repository deletion removes it. A user-facing installation-disconnect endpoint is not implemented.
 - The GitHub token cache is process-local. No rate limiting, TLS termination, or CORS policy is configured in the application; these belong to your deployment.
@@ -710,7 +710,7 @@ The smoke test builds the stack, creates a disposable account and ZIP repository
 - **Static analysis only.** Relationships come from Tree-sitter syntax analysis. Dynamic dispatch, reflection, runtime configuration, and generated code are not resolved, so some real flows will appear as `unresolved` or be missed. Relationships carry `high` or `low` confidence, not proofs.
 - **Scale.** Behavior above roughly 2,000 indexable files is untested. The full hard-bound scale (500 MB / 20,000 files) has not been verified end to end.
 - **Model nondeterminism.** Validation guarantees that citations refer to sent evidence; it does not guarantee that the prose is a correct reading of that evidence. Answer quality depends on the configured model.
-- **Provider dependence.** Generated answers require at least one reachable model endpoint; external documentation search requires SerpAPI.
+- **Provider dependence.** Generated answers require at least one reachable OpenAI model endpoint (Model A or Model B), and Ask & Compare needs both; external documentation search requires SerpAPI.
 - **Synchronous sync.** `POST /repositories/{id}/sync` runs synchronously while recording index stages; it is not a background job, and `MAX_CONCURRENT_INDEX_JOBS` is not enforced. Uploaded repositories have no sync source; the sync endpoint applies to GitHub-imported repositories.
 - **Memory reuse.** Repository memory is selected by topic keyword, and each analysis request opens a new session, so cross-request session memory is implemented but not demonstrated on the normal Ask path.
 - **Evaluation scope.** The automated benchmark runs on one small fixture with a deterministic embedding and a mock model. Live GitHub, live model, and live web-search paths were verified only with mocks in the automated suite; the recorded live demo is still outstanding per the acceptance checklist.
